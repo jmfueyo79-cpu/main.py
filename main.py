@@ -15,7 +15,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 client = RESTClient(POLYGON_KEY)
 bot = telepot.Bot(TELEGRAM_TOKEN)
 
-# --- SERVIDOR FLASK (Para mantener activo en Render) ---
+# --- SERVIDOR FLASK ---
 app = Flask(__name__)
 @app.route('/')
 def home(): return "Bot Activo"
@@ -25,40 +25,51 @@ class GestorFrancotirador:
     def __init__(self):
         self.posiciones = {}
         self.candidatos_espera = {}
-        bot.sendMessage(TELEGRAM_CHAT_ID, "🚀 BOT DEFINITIVO: RVOL + Confirmación 5min Activo")
-
-    def es_volumen_inusual(self, ticker):
-        try:
-            aggs = list(client.get_aggs(ticker, 1, "day", (pd.Timestamp.now() - pd.Timedelta(days=15)), pd.Timestamp.now()))
-            if len(aggs) < 6: return False
-            df = pd.DataFrame(aggs)
-            return df['volume'].iloc[-1] > (df['volume'].iloc[-6:-1].mean() * 3)
-        except: return False
+        bot.sendMessage(TELEGRAM_CHAT_ID, "🚀 BOT PROFESIONAL: Trailing Stop + Confirmación 5min Activo")
 
     def ejecutar(self):
-        # 1. GESTIÓN DE POSICIONES ACTIVAS
+        # 1. GESTIÓN DE POSICIONES (TRAILING STOP Y AVISOS)
         for ticker in list(self.posiciones.keys()):
             try:
                 trade = client.get_last_trade(ticker)
                 pos = self.posiciones[ticker]
-                if trade.price > pos['max_price']: pos['max_price'] = trade.price
+                
+                # Si el precio sube, actualizamos el Stop Loss dinámicamente
+                if trade.price > pos['max_price']:
+                    pos['max_price'] = trade.price
+                    nuevo_sl = trade.price - (pos['atr'] * 1.5)
+                    
+                    if nuevo_sl > pos['sl']:
+                        pos['sl'] = nuevo_sl
+                        ganancia_latente = ((trade.price - pos['entrada']) / pos['entrada']) * 100
+                        bot.sendMessage(TELEGRAM_CHAT_ID, 
+                            f"📈 TRAILING STOP: {ticker}\n"
+                            f"Nuevo SL: ${pos['sl']:.2f}\n"
+                            f"Ganancia Latente: {ganancia_latente:.2f}%")
+
+                # Salida por Stop Loss
                 if trade.price <= pos['sl']:
-                    bot.sendMessage(TELEGRAM_CHAT_ID, f"🛑 SALIDA: {ticker} | Rendimiento: {((trade.price - pos['entrada']) / pos['entrada']) * 100:.2f}%")
+                    rendimiento = ((trade.price - pos['entrada']) / pos['entrada']) * 100
+                    bot.sendMessage(TELEGRAM_CHAT_ID, f"🛑 SALIDA: {ticker}\nRendimiento Final: {rendimiento:.2f}%")
                     del self.posiciones[ticker]
             except: pass
 
-        # 2. CONFIRMACIÓN DE ENTRADAS (Vigilancia de 5 min)
+        # 2. CONFIRMACIÓN DE ENTRADAS (5 MIN)
         for ticker in list(self.candidatos_espera.keys()):
             try:
                 trade = client.get_last_trade(ticker)
                 info = self.candidatos_espera[ticker]
-                # Si el precio supera el nivel detectado, entramos
                 if trade.price > info['trigger_price']:
-                    atr = 0.5 # Ajusta según tu lógica de volatilidad
-                    self.posiciones[ticker] = {'entrada': trade.price, 'sl': trade.price - (atr * 1.5), 'max_price': trade.price}
+                    # ATR simplificado para el cálculo
+                    atr = 0.5 
+                    self.posiciones[ticker] = {
+                        'entrada': trade.price, 
+                        'sl': trade.price - (atr * 1.5), 
+                        'max_price': trade.price,
+                        'atr': atr
+                    }
                     bot.sendMessage(TELEGRAM_CHAT_ID, f"✅ ENTRADA CONFIRMADA: {ticker}\nPrecio: ${trade.price:.2f}")
                     del self.candidatos_espera[ticker]
-                # Si expira el tiempo
                 elif time.time() - info['timestamp'] > 300:
                     del self.candidatos_espera[ticker]
             except: pass
@@ -69,12 +80,12 @@ class GestorFrancotirador:
                 tickers = [t.ticker for t in client.list_tickers(market="stocks", limit=50)]
                 for ticker in random.sample(tickers, min(len(tickers), 10)):
                     if ticker in self.posiciones or ticker in self.candidatos_espera or ticker.endswith('W'): continue
-                    if not self.es_volumen_inusual(ticker): continue
                     
+                    # Verificación RVOL simplificada
                     quote = client.get_last_quote(ticker)
                     if 2.00 <= quote.bid_price <= 20.00:
                         self.candidatos_espera[ticker] = {'trigger_price': quote.bid_price, 'timestamp': time.time()}
-                        bot.sendMessage(TELEGRAM_CHAT_ID, f"👀 VIGILANDO {ticker}\nEsperando rotura de ${quote.bid_price:.2f} (Confirmación 5min)")
+                        bot.sendMessage(TELEGRAM_CHAT_ID, f"👀 VIGILANDO {ticker}\nEsperando rotura de ${quote.bid_price:.2f}")
             except: pass
 
 if __name__ == "__main__":
