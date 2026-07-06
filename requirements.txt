@@ -1,0 +1,6 @@
+polygon-api-client
+telepot
+pandas
+flask
+websocket-client
+pytz
