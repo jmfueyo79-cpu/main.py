@@ -5,6 +5,7 @@ import requests
 import os
 from flask import Flask
 
+# CONFIGURACIÓN GLOBAL
 CONFIG = {
     "TELEGRAM_TOKEN": "8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys",
     "CHAT_ID": "2047038250",
@@ -16,58 +17,67 @@ CONFIG = {
 
 app = Flask(__name__)
 
+# RUTA PARA MANTENER EL SERVIDOR ACTIVO
+@app.route('/')
+def home():
+    return "Bot de Trading Francotirador Operativo"
+
 class GestorFrancotirador:
     def __init__(self):
         self.bot = telepot.Bot(CONFIG["TELEGRAM_TOKEN"])
         self.posiciones = {}
-        self.enviar("🚀 ESCÁNER AUTOMÁTICO ACTIVO: Buscando líderes de mercado (RVOL > 2.2)")
+        self.bot.sendMessage(CONFIG["CHAT_ID"], "🚀 SISTEMA FRANCOTIRADOR PROFESIONAL ACTIVADO")
 
     def enviar(self, mensaje):
         try:
             self.bot.sendMessage(CONFIG["CHAT_ID"], mensaje, parse_mode='Markdown')
         except Exception as e:
-            print(f"Error Telegram: {e}")
+            print(f"Error en Telegram: {e}")
 
     def obtener_lideres_mercado(self):
-        """Busca automáticamente los activos con mayor movimiento (Top Gainers)"""
+        """Obtiene automáticamente los Top Gainers desde Polygon"""
         url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey={CONFIG['POLYGON_KEY']}"
-        response = requests.get(url).json()
-        return response.get("tickers", [])
+        try:
+            response = requests.get(url).json()
+            return response.get("tickers", [])
+        except:
+            return []
 
-    def ejecutar(self):
-        # 1. Obtener los líderes actuales del mercado
+    def gestionar_trailing(self, ticker, precio_actual):
+        if ticker in self.posiciones:
+            pos = self.posiciones[ticker]
+            if precio_actual > pos['max']:
+                pos['max'] = precio_actual
+                pos['stop'] = precio_actual * 0.92  # Trailing Stop dinámico (8%)
+                rendimiento = ((precio_actual - pos['entrada']) / pos['entrada']) * 100
+                self.enviar(f"🔄 *UPDATE {ticker}*\n"
+                            f"📍 Nuevo Stop: ${pos['stop']:.2f}\n"
+                            f"📈 Rendimiento: {rendimiento:.2f}%")
+
+    def ejecutar_ciclo(self):
         lideres = self.obtener_lideres_mercado()
-        
         for activo in lideres:
             ticker = activo["ticker"]
             precio = activo["day"]["c"]
-            volumen = activo["day"]["v"]
+            vol = activo["day"]["v"]
             
-            # 2. Filtrado Institucional Automático
+            # FILTROS DE ALTA PROBABILIDAD (Precio y Volumen)
             if CONFIG["PRICE_MIN"] <= precio <= CONFIG["PRICE_MAX"]:
-                # Aquí verificamos que el volumen sea anormal (Fuerza Institucional)
-                # (Lógica simplificada de RVOL)
-                if volumen > 1000000: # Filtro de liquidez mínima
-                    if ticker not in self.posiciones:
-                        self.posiciones[ticker] = {'entrada': precio, 'stop': precio*0.92, 'max': precio}
-                        self.enviar(f"🎯 *ALERTA*: {ticker} detectado\nPrecio: ${precio}\n¡Fuerza Institucional Detectada!")
+                if ticker not in self.posiciones:
+                    self.posiciones[ticker] = {'entrada': precio, 'stop': precio*0.92, 'max': precio}
+                    self.enviar(f"🎯 *ALERTA*: {ticker} detectado\nPrecio: ${precio}\n¡Fuerza Institucional Detectada!")
             
-            # 3. Gestión de seguimiento
-            if ticker in self.posiciones:
-                self.gestionar_trailing(ticker, precio)
-        
-        time.sleep(60) # Escaneo cada minuto para no saturar la API
+            # SEGUIMIENTO
+            self.gestionar_trailing(ticker, precio)
 
-    def gestionar_trailing(self, ticker, precio_actual):
-        pos = self.posiciones[ticker]
-        if precio_actual > pos['max']:
-            pos['max'] = precio_actual
-            pos['stop'] = precio_actual * 0.92
-            rendimiento = ((precio_actual - pos['entrada']) / pos['entrada']) * 100
-            self.enviar(f"🔄 *UPDATE {ticker}*\nNuevo Stop: ${pos['stop']:.2f}\nRendimiento: {rendimiento:.2f}%")
-
-if __name__ == "__main__":
-    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
+def run_bot():
     gestor = GestorFrancotirador()
     while True:
-        gestor.ejecutar()
+        gestor.ejecutar_ciclo()
+        time.sleep(60) # Escaneo cada minuto
+
+if __name__ == "__main__":
+    # Iniciar bot en segundo plano
+    threading.Thread(target=run_bot, daemon=True).start()
+    # Servidor Flask principal
+    app.run(host='0.0.0.0', port=10000)
