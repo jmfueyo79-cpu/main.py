@@ -1,12 +1,14 @@
 import time
+import os
+import threading
 from flask import Flask
 
-# Configuración Ajustada para mayor flujo de alertas
+# Configuración Optimizada
 CONFIG = {
-    "RVOL_THRESHOLD": 2.2,       # Reducido de 3.0 para detectar más volumen
-    "PRICE_MIN": 2.0,            # Mantenido en 2.0 para evitar penny stocks tóxicas
-    "PRICE_MAX": 22.0,           # Aumentado para mayor universo de activos
-    "CONFIRMATION_MINUTES": 3    # Reducido de 5 a 3 para mayor rapidez
+    "RVOL_THRESHOLD": 2.2,
+    "PRICE_MIN": 2.0,
+    "PRICE_MAX": 22.0,
+    "CONFIRMATION_MINUTES": 3
 }
 
 app = Flask(__name__)
@@ -17,28 +19,33 @@ def home():
 
 class GestorFrancotirador:
     def __init__(self):
-        print("🚀 BOT PROFESIONAL: Trailing Stop + Confirmación 3min Activo")
-        # Aquí iría tu lógica de conexión a Polygon y Telegram
+        # Diagnóstico de variables de entorno
+        token = os.environ.get("TELEGRAM_TOKEN")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+        
+        print(f"DEBUG: Token cargado: {'*' * 5 if token else 'VACÍO'}")
+        print(f"DEBUG: Chat ID cargado: {chat_id if chat_id else 'VACÍO'}")
+        
+        if not token or not chat_id:
+            print("ERROR: Faltan credenciales de Telegram en las variables de entorno.")
+        else:
+            print("🚀 BOT PROFESIONAL: Trailing Stop + Confirmación 3min Activo")
+            # Aquí va tu inicialización real de telepot o tu cliente de Telegram
 
     def ejecutar(self):
-        # Lógica principal del bot
-        # 1. Escaneo con RVOL >= CONFIG["RVOL_THRESHOLD"]
-        # 2. Filtrado por precio: CONFIG["PRICE_MIN"] <= price <= CONFIG["PRICE_MAX"]
-        # 3. Espera de confirmación: CONFIG["CONFIRMATION_MINUTES"]
+        # Lógica de escaneo
         pass
 
 if __name__ == "__main__":
-    # Bucle robusto con reinicio automático
-    while True:
-        try:
-            # Iniciar servidor web en hilo separado para evitar spin-down
-            import threading
-            threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
-            
-            gestor = GestorFrancotirador()
-            while True:
-                gestor.ejecutar()
-                time.sleep(15)
-        except Exception as e:
-            print(f"Error detectado, reiniciando bot: {e}")
-            time.sleep(60) 
+    # Iniciar servidor Flask para evitar el spin-down
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
+    
+    # Inicializar y ejecutar el gestor
+    try:
+        gestor = GestorFrancotirador()
+        while True:
+            gestor.ejecutar()
+            time.sleep(15)
+    except Exception as e:
+        print(f"CRITICAL ERROR: {e}")
+        
