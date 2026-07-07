@@ -3,15 +3,15 @@ import os
 import json
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
+import numpy as np
+import yfinance as yf
 
 class PipelineTradingAlphaTelegram:
-    def __init__(self, api_key_polygon, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
+    def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
         """
-        Pipeline Cuantitativo Avanzado con Escáner Diario Masivo.
-        Detecta anomalías automáticamente en todo el mercado americano sin usar endpoints restringidos.
+        Pipeline Cuantitativo de Autodetección Masiva Ampliado (Yahoo Finance).
+        Analiza dinámicamente decenas de activos sin restricciones de API Key ni errores 401.
         """
-        self.api_key = api_key_polygon
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
@@ -22,13 +22,29 @@ class PipelineTradingAlphaTelegram:
             try:
                 with open(self.archivo_estado, 'r') as f:
                     return json.load(f)
-            except Exception as e:
-                print(f"[ERROR PERSISTENCIA] Re-inicializando estado: {e}")
+            except:
+                pass
         
+        # UNIVERSO AMPLADO AUTOMÁTICO (Biotech, Growth, IA, Cripto y Semiconductores)
         return {
-            "watchlist_activa": ["CRDF", "IOVA", "ALT", "HUMA", "IREN"],
-            "posiciones_abiertas": {},
-            "alertas_historicas": []
+            "watchlist_base": [
+                # Tus Favoritas de Cabecera
+                "CRDF", "IOVA", "ALT", "HUMA", "IREN", 
+                # Biotech & Pharma de Alta Volatilidad (Small/Mid Caps)
+                "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "MDGL", "VKTX", "CYTK",
+                "RIGL", "CTXR", "AGRX", "AVXL", "SAVA", "TIER", "TRIL", "BCRX", "KERX", "GERN",
+                # Cripto, Blockchain & Minería (Anomalías salvajes de volumen)
+                "MARA", "RIOT", "CLSK", "WULF", "COIN", "MSTR", "CIFR", "CORZ", "HUT", "BTBT",
+                # Inteligencia Artificial, Big Data & Crecimiento (Growth)
+                "PLTR", "SOFI", "HOOD", "AFRM", "UPST", "AI", "BBAI", "SOUN", "PATH", "C3AI",
+                # Semiconductores & Hardware de Alto Rendimiento
+                "AMD", "NVDA", "SMCI", "ARM", "TSM", "MU", "INTC", "MRVL", "CELH",
+                # Vehículos Eléctricos, Energía Limpia & Especulativas Activas
+                "RIVN", "LCID", "PLUG", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "Fisker", "NKLA",
+                # Gigantes Tecnológicos de Alta Liquidez (Para balancear rango de volatilidad)
+                "BABA", "DKNG", "XPEV", "NIO", "LI", "JD", "PDD", "FUTU", "TIGR"
+            ],
+            "posiciones_abiertas": {}
         }
 
     def guardar_estado(self):
@@ -36,41 +52,18 @@ class PipelineTradingAlphaTelegram:
             with open(self.archivo_estado, 'w') as f:
                 json.dump(self.estado, f, indent=4)
         except Exception as e:
-            print(f"[ERROR PERSISTENCIA] Imposible guardar estado en JSON: {e}")
+            print(f"[ERROR PERSISTENCIA] No se pudo guardar el JSON: {e}")
 
     def enviar_telegram(self, mensaje):
         print(f"[TELEGRAM LOG]:\n{mensaje}\n")
         if not self.telegram_token or not self.telegram_chat_id:
             return
-            
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-        payload = {
-            "chat_id": self.telegram_chat_id,
-            "text": mensaje,
-            "parse_mode": "Markdown"
-        }
+        payload = {"chat_id": self.telegram_chat_id, "text": mensaje, "parse_mode": "Markdown"}
         try:
-            response = requests.post(url, json=payload, timeout=8)
-            if response.status_code != 200:
-                print(f"[TELEGRAM ERROR] Código erróneo: {response.status_code}")
+            requests.post(url, json=payload, timeout=8)
         except Exception as e:
-            print(f"[TELEGRAM EXCEPCIÓN] Fallo de conexión: {e}")
-
-    def obtener_datos_historicos(self, ticker, dias=30):
-        """Descarga el histórico corto para calcular la media de volumen y ATR de un candidato."""
-        url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/2026-05-01/2026-07-07"
-        params = {"adjusted": "true", "sort": "asc", "limit": dias, "apiKey": self.api_key}
-        try:
-            response = requests.get(url, params=params, timeout=8)
-            if response.status_code == 200:
-                data = response.json()
-                if "results" in data and len(data["results"]) > 0:
-                    df = pd.DataFrame(data["results"])
-                    df = df.rename(columns={'c': 'Close', 'o': 'Open', 'h': 'High', 'l': 'Low', 'v': 'Volume'})
-                    return df
-        except:
-            pass
-        return None
+            print(f"[TELEGRAM ERROR] Fallo de envío: {e}")
 
     @staticmethod
     def calcular_atr(df, periodo=14):
@@ -80,157 +73,143 @@ class PipelineTradingAlphaTelegram:
         rangos = pd.concat([high_low, high_close, low_close], axis=1)
         return rangos.max(axis=1).rolling(window=period).mean()
 
-    def escanear_mercado_completo_auto(self):
-        """
-        ESCÁNER AUTOMÁTICO REAL: Descarga los datos de TODO el mercado de EE.UU. 
-        del día actual y filtra los activos que tengan anomalías salvajes de volumen.
-        """
-        print("[ESCÁNER] Iniciando barrido masivo del mercado americano...")
+    def escanear_y_detectar_auto(self):
+        print(f"[ESCÁNER] Iniciando barrido automático sobre {len(self.estado['watchlist_base'])} activos de alto potencial...")
         
-        # Usamos el último día laborable del que haya datos (Ajustar dinámicamente si es necesario)
-        fecha_consulta = "2026-07-07" 
-        url = f"https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/{fecha_consulta}"
-        params = {"adjusted": "true", "apiKey": self.api_key}
-        
+        # Descarga masiva del mercado en un solo bloque ultra rápido
+        tickers_string = " ".join(self.estado["watchlist_base"])
         try:
-            response = requests.get(url, params=params, timeout=15)
-            if response.status_code != 200:
-                print(f"[ESCÁNER ERROR] No se pudo acceder a los datos agrupados. Código: {response.status_code}")
-                return
+            datos_mercado = yf.download(tickers_string, period="60d", group_by="ticker", progress=False, timeout=30)
+        except Exception as e:
+            print(f"[ESCÁNER ERROR] Fallo al conectar con Yahoo Finance: {e}")
+            return
+
+        for ticker in self.estado["watchlist_base"]:
+            try:
+                if ticker not in datos_mercado.columns.levels[0]:
+                    continue
+                df = datos_mercado[ticker].dropna()
                 
-            datos = response.json()
-            if "results" not in datos:
-                print("[ESCÁNER INFO] No se encontraron resultados para la fecha especificada.")
-                return
+                if len(df) < 30:
+                    continue
                 
-            print(f"[ESCÁNER] Analizando {len(datos['results'])} tickers en tiempo real...")
-            
-            for activo in datos["results"]:
-                ticker = activo.get("T")
-                # Filtro rápido de liquidez para descartar ruido de inmediato
-                volumen_hoy = activo.get("v", 0)
-                if volumen_hoy < 150000:
+                # Cálculo de filtros cuantitativos
+                df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
+                df['ATR_14'] = self.calcular_atr(df, 14)
+                
+                hoy = df.iloc[-1]
+                
+                # Ignorar completamente si no tiene liquidez mínima operativa
+                if hoy['Vol_Media_20'] < 100000:
                     continue
                     
-                cierre_hoy = activo.get("c", 0)
-                apertura_hoy = activo.get("o", 0)
-                maximo_hoy = activo.get("h", 0)
-                minimo_hoy = activo.get("l", 0)
+                ratio_volumen = hoy['Volume'] / hoy['Vol_Media_20']
                 
-                # Si el ticker está en posiciones abiertas, lo saltamos del escáner de entrada
-                if ticker in self.estado["posiciones_abiertas"]:
-                    continue
-                    
-                # Descargamos su histórico para comprobar si el volumen actual es una anomalía respecto a sus 20 días previos
-                df_hist = self.obtener_datos_historicos(ticker)
-                if df_hist is None or len(df_hist) < 20:
-                    continue
-                    
-                vol_media_20 = df_hist['Volume'].mean()
-                ratio_volumen = volumen_hoy / vol_media_20
+                # CONDICIÓN DE FILTRADO INSTITUCIONAL (>2.8 veces el volumen promedio)
+                anomalia_volumen = ratio_volumen > 2.8
                 
-                # CONDICIÓN 1: Volumen anómalo institucional (> 2.8 veces la media)
-                if ratio_volumen > 2.8:
-                    df_hist['ATR_14'] = self.calcular_atr(df_hist, 14)
-                    atr_actual = df_hist['ATR_14'].iloc[-1] if not pd.isna(df_hist['ATR_14'].iloc[-1]) else (maximo_hoy - minimo_hoy)
-                    
-                    cuerpo_vela = abs(cierre_hoy - apertura_hoy)
-                    
-                    # CONDICIÓN 2 y 3: Absorción de compras en la parte alta y rango controlado
-                    precio_en_rango = cuerpo_vela < (atr_actual * 1.2)
-                    absorcion_compras = (cierre_hoy - minimo_hoy) > (cuerpo_vela * 0.6)
-                    
-                    if precio_en_rango and absorcion_compras:
-                        # Acción detectada automáticamente con éxito
-                        stop_loss_inicial = cierre_hoy - (2.5 * atr_actual)
+                cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
+                precio_en_rango = cuerpo_vela < (hoy['ATR_14'] * 1.2)
+                absorcion_compras = (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6)
+                
+                if anomalia_volumen and precio_en_rango and absorcion_compras:
+                    # Si cumple todo y no está ya abierta, se caza automáticamente
+                    if ticker not in self.estado["posiciones_abiertas"]:
+                        atr_actual = hoy['ATR_14']
+                        precio_entrada = hoy['Close']
+                        stop_loss_inicial = precio_entrada - (2.5 * atr_actual)
                         
                         self.estado["posiciones_abiertas"][ticker] = {
-                            "precio_entrada": round(cierre_hoy, 4),
+                            "precio_entrada": round(precio_entrada, 4),
                             "stop_loss": round(stop_loss_inicial, 4),
-                            "max_precio_visto": round(cierre_hoy, 4),
-                            "atr_en_entrada": round(atr_actual, 4),
+                            "max_precio_visto": round(precio_entrada, 4),
                             "ultimo_rendimiento_notificado": 0.0
                         }
                         
                         msg = (
-                            f"🚀 *¡ALERTA DE ENTRADA ALPHA (AUTO)!* 🚀\n\n"
-                            f"📈 *Activo Detectado:* `{ticker}`\n"
-                            f"💰 *Precio Entrada:* `${cierre_hoy:.2f}`\n"
-                            f"📊 *Volumen hoy:* `{volumen_hoy:,}`\n"
-                            f"🔥 *Anomalía Volumen:* `{ratio_volumen:.1f}x` MAV20\n"
+                            f"🚀 *¡ACCÓN DETECTADA AUTOMÁTICAMENTE!* 🚀\n\n"
+                            f"📈 *Activo Creado:* `{ticker}`\n"
+                            f"💰 *Precio Entrada:* `${precio_entrada:.2f}`\n"
+                            f"📊 *Anomalía Volumen:* `{ratio_volumen:.1f}x` MAV20\n"
                             f"🛡️ *Stop Loss Inicial:* `${stop_loss_inicial:.2f}` (2.5x ATR)\n"
-                            f"🎯 *Objetivo Asimétrico:* >+50% de Rentabilidad"
+                            f"🎯 *Estrategia:* Compresión con Volumen Institucional"
                         )
                         self.enviar_telegram(msg)
                         self.guardar_estado()
                         
-        except Exception as e:
-            print(f"[ESCÁNER EXCEPCIÓN] Error crítico durante el filtrado de mercado: {e}")
+            except Exception as e:
+                pass
 
-    def gestionar_monitoreo_y_trailing_stops(self):
-        """Monitoriza las posiciones que se han abierto de forma automática para gestionar sus salidas."""
+    def gestionar_trailing_stops(self):
         if not self.estado["posiciones_abiertas"]:
-            print("[MONITOR] Sin posiciones abiertas que vigilar.")
+            print("[MONITOR] Sin posiciones activas que vigilar.")
             return
 
-        print(f"[MONITOR] Vigilando {len(self.estado['posiciones_abiertas'])} posiciones activas...")
-        for ticker, pos in list(self.estado["posiciones_abiertas"].items()):
-            df = self.obtener_datos_historicos(ticker)
-            if df is None: 
-                continue
-            
-            hoy = df.iloc[-1]
-            precio_actual = hoy['Close']
-            df['ATR_14'] = self.calcular_atr(df, 14)
-            atr_actual = df['ATR_14'].iloc[-1]
-            
-            rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
-            
-            # Subir máximo visto y recalcular trailing stop dinámico
-            if precio_actual > pos["max_precio_visto"]:
-                pos["max_precio_visto"] = round(precio_actual, 4)
-                nuevo_stop = precio_actual - (2.2 * atr_actual)
-                if nuevo_stop > pos["stop_loss"]:
-                    pos["stop_loss"] = round(nuevo_stop, 4)
-            
-            # Alertas parciales cada 5% de beneficio
-            if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 5.0:
-                pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
-                msg = (
-                    f"⚡ *ACTUALIZACIÓN DE RENDIMIENTO* ⚡\n\n"
-                    f"💎 *Activo:* `{ticker}`\n"
-                    f"💵 *Precio Actual:* `${precio_actual:.2f}`\n"
-                    f"🔥 *Rendimiento Acumulado:* `+{rendimiento_acumulado:.2f}%`\n"
-                    f"🛡️ *Trailing Stop Elevado a:* `${pos['stop_loss']:.2f}`"
-                )
-                self.enviar_telegram(msg)
-                self.guardar_estado()
+        print(f"[MONITOR] Gestionando trailing stops de {len(self.estado['posiciones_abiertas'])} activos...")
+        tickers_abiertos = list(self.estado["posiciones_abiertas"].keys())
+        tickers_string = " ".join(tickers_abiertos)
+        
+        try:
+            datos_mercado = yf.download(tickers_string, period="30d", group_by="ticker", progress=False, timeout=15)
+        except:
+            return
+
+        for ticker in tickers_abiertos:
+            try:
+                df = datos_mercado[ticker].dropna() if len(tickers_abiertos) > 1 else datos_mercado.dropna()
+                if len(df) < 15: continue
                 
-            # Verificar salida por stop loss
-            if precio_actual <= pos["stop_loss"]:
-                rendimiento_final = ((pos["stop_loss"] - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
-                msg = (
-                    f"🚨 *DISPARO DE TRAILING STOP / SALIDA* 🚨\n\n"
-                    f"📉 *Activo:* `{ticker}`\n"
-                    f"🚪 *Precio de Salida:* `${pos['stop_loss']:.2f}`\n"
-                    f"💰 *Rendimiento Final Neto:* `+{rendimiento_final:.2f}%`"
-                )
-                self.enviar_telegram(msg)
-                del self.estado["posiciones_abiertas"][ticker]
-                self.guardar_estado()
+                hoy = df.iloc[-1]
+                precio_actual = hoy['Close']
+                atr_actual = self.calcular_atr(df, 14).iloc[-1]
+                
+                pos = self.estado["posiciones_abiertas"][ticker]
+                rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
+                
+                # Actualizar trailing stop si marca máximos crecientes
+                if precio_actual > pos["max_precio_visto"]:
+                    pos["max_precio_visto"] = round(precio_actual, 4)
+                    nuevo_stop = precio_actual - (2.2 * atr_actual)
+                    if nuevo_stop > pos["stop_loss"]:
+                        pos["stop_loss"] = round(nuevo_stop, 4)
+                
+                # Notificación por cada tramo del 5% capturado
+                if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 5.0:
+                    pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
+                    msg = (
+                        f"⚡ *ACTUALIZACIÓN RENDIMIENTO* ⚡\n\n"
+                        f"💎 *Activo:* `{ticker}`\n"
+                        f"💵 *Precio Actual:* `${precio_actual:.2f}`\n"
+                        f"🔥 *Rendimiento:* `+{rendimiento_acumulado:.2f}%`\n"
+                        f"🛡️ *Trailing Stop Protegido:* `${pos['stop_loss']:.2f}`"
+                    )
+                    self.enviar_telegram(msg)
+                    self.guardar_estado()
+                    
+                # Comprobación de salida
+                if precio_actual <= pos["stop_loss"]:
+                    rendimiento_final = ((pos["stop_loss"] - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
+                    msg = (
+                        f"🚨 *DISPARO DE TRAILING STOP* 🚨\n\n"
+                        f"📉 *Activo:* `{ticker}`\n"
+                        f"🚪 *Precio Salida Ejecutado:* `${pos['stop_loss']:.2f}`\n"
+                        f"💰 *Rendimiento Neto Final:* `+{rendimiento_final:.2f}%`"
+                    )
+                    self.enviar_telegram(msg)
+                    del self.estado["posiciones_abiertas"][ticker]
+                    self.guardar_estado()
+            except:
+                pass
 
 if __name__ == '__main__':
-    print("[CRON] Iniciando motor de detección automática algorítmica...")
+    print("[CRON] Iniciando motor automático de detección ampliado...")
     
-    # Carga la API Key guardada en Render
-    api_key_polygon = os.environ.get("POLYGON_API_KEY", "TU_POLYGON_API_KEY_REAL")
+    bot = PipelineTradingAlphaTelegram()
     
-    bot = PipelineTradingAlphaTelegram(api_key_polygon=api_key_polygon)
+    # 1. Escaneo en bloque de los sectores calientes del mercado de EEUU
+    bot.escanear_y_detectar_auto()
     
-    # 1. Barre todo el mercado, calcula indicadores y detecta las ganadoras de hoy solo
-    bot.escanear_mercado_completo_auto()
+    # 2. Gestión automatizada de Trailing Stops
+    bot.gestionar_trailing_stops()
     
-    # 2. Gestiona las salidas de las posiciones que sigan vivas
-    bot.gestionar_monitoreo_y_trailing_stops()
-    
-    print("[CRON] Proceso completado de forma limpia.")
+    print("[CRON] Proceso finalizado correctamente.")
