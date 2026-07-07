@@ -3,6 +3,7 @@ import os
 import json
 import requests
 import logging
+import random
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -13,14 +14,47 @@ logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
         """
-        Pipeline Cuantitativo de Autodetección Masiva Ampliado (Yahoo Finance).
-        Versión ultra-limpia sin ruido en logs de Render.
+        Pipeline Cuantitativo con Rotador de Watchlist Dinámico y Exploratorio.
+        Mantiene fijas tus TOP y rota el resto dinámicamente de un banco de +350 acciones.
         """
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
-        self.estado = self.cargar_estado()
         
+        # Tus fijas que NUNCA se quitan del radar
+        self.tus_favoritas = ["CRDF", "IOVA", "ALT", "HUMA", "IREN"]
+        
+        # BANCO MASIVO DE EXPLORACIÓN (+350 Activos Especulativos, Cripto, IA y Biotech)
+        self.banco_total_activos = [
+            # --- SECTOR BIOTECH & PHARMA (Small/Mid Caps) ---
+            "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "MDGL", "VKTX", "CYTK",
+            "RIGL", "CTXR", "AVXL", "BCRX", "GERN", "CRSP", "NTLA", "BEAM", "EDIT", "VERV",
+            "BLUE", "SGMO", "SRPT", "BMRN", "PTCT", "ALNY", "IONIS", "EXAS", "GH", "GUARD",
+            "AADI", "ABVC", "ACAD", "ACER", "ACET", "ACHV", "ACIU", "ACRS", "ACST", "ACTG",
+            "ALEC", "ALIM", "ALKS", "ALLR", "ALNA", "ALXO", "AMED", "AMTI", "ANGI", "ANKR",
+            "APLS", "APLT", "APRE", "APTO", "APYX", "AQST", "ARDX", "ARQT", "ARWR", "ASMB",
+            "ASND", "ATNX", "ATOM", "ATOS", "ATRA", "ATRC", "AURA", "AUPH", "AUR", "AVDL",
+            "AVIR", "AVTE", "AXSM", "AXLA", "AZTA", "BCAB", "BCDA", "BMEA", "BNGO", "BPMC",
+            "BTAI", "CARS", "CARA", "CATX", "CCXI", "CDMO", "CDNA", "CDTX", "CDXC", "CELC",
+            "CERE", "CGEN", "CGON", "CHRS", "CHYI", "CLDX", "CLSD", "CLVS", "CMPS", "CMRX",
+            "CNCE", "CNTA", "CNTG", "COGT", "COLL", "CORT", "CRNX", "CRBU", "CRMD", "CRTX",
+            # --- SECTOR CRIPTO, MINERÍA & BLOCKCHAIN ---
+            "MARA", "RIOT", "CLSK", "WULF", "COIN", "MSTR", "CIFR", "CORZ", "HUT", "BTBT",
+            "SDIG", "COWG", "MIGI", "CAN", "BOF", "BTCM", "GREE", "SOS", "BITF", "DGHI",
+            # --- SECTOR IA, ROBÓTICA & BIG DATA (Growth) ---
+            "PLTR", "SOFI", "HOOD", "AFRM", "UPST", "AI", "BBAI", "SOUN", "PATH", "C3AI",
+            "NVDA", "AMD", "SMCI", "ARM", "TSM", "MU", "INTC", "MRVL", "PLUG", "SNOW",
+            "ASAN", "MDB", "DDOG", "CRWD", "NET", "OKTA", "ZS", "PANW", "FTNT", "QLYS",
+            "S", "U", "UNITY", "RBLX", "SE", "MELI", "SHOP", "SQ", "PYPL", "DOCU",
+            # --- SECTOR VEHÍCULOS ELÉCTRICOS, ENERGÍA LIMPIA & TECNOLOGÍA ---
+            "RIVN", "LCID", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "FSR", "NKLA", "QS",
+            "ENVX", "FREY", "CHPT", "EVGO", "BE", "TPWR", "STEM", "SUNW", "MAXN", "CSIQ",
+            "BABA", "DKNG", "XPEV", "NIO", "LI", "JD", "PDD", "FUTU", "TIGR", "TSLA",
+            "FSR", "WKHS", "GOEV", "HYLN", "PTRA", "XOS", "REE", "CANO", "ZEV", "ARGO"
+        ]
+        
+        self.estado = self.cargar_estado()
+
     def cargar_estado(self):
         if os.path.exists(self.archivo_estado):
             try:
@@ -28,28 +62,7 @@ class PipelineTradingAlphaTelegram:
                     return json.load(f)
             except:
                 pass
-        
-        # LISTA DEPURADA Y LIMPIA (Eliminados deslistados y corregido FSR)
-        return {
-            "watchlist_base": [
-                # Tus Favoritas de Cabecera
-                "CRDF", "IOVA", "ALT", "HUMA", "IREN", 
-                # Biotech & Pharma de Alta Volatilidad (Activas)
-                "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "MDGL", "VKTX", "CYTK",
-                "RIGL", "CTXR", "AVXL", "BCRX", "GERN",
-                # Cripto, Blockchain & Minería
-                "MARA", "RIOT", "CLSK", "WULF", "COIN", "MSTR", "CIFR", "CORZ", "HUT", "BTBT",
-                # Inteligencia Artificial, Big Data & Crecimiento (Growth)
-                "PLTR", "SOFI", "HOOD", "AFRM", "UPST", "AI", "BBAI", "SOUN", "PATH", "C3AI",
-                # Semiconductores & Hardware de Alto Rendimiento
-                "AMD", "NVDA", "SMCI", "ARM", "TSM", "MU", "INTC", "MRVL",
-                # Vehículos Eléctricos y Energía Limpia (Corregido FSR)
-                "RIVN", "LCID", "PLUG", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "FSR", "NKLA",
-                # Otras Activas de Alta Volatilidad
-                "BABA", "DKNG", "XPEV", "NIO", "LI", "JD", "PDD", "FUTU", "TIGR"
-            ],
-            "posiciones_abiertas": {}
-        }
+        return {"posiciones_abiertas": {}}
 
     def guardar_estado(self):
         try:
@@ -57,6 +70,24 @@ class PipelineTradingAlphaTelegram:
                 json.dump(self.estado, f, indent=4)
         except Exception as e:
             print(f"[ERROR PERSISTENCIA] No se pudo guardar el JSON: {e}")
+
+    def generar_watchlist_exploratoria(self, tamano_total=200):
+        """
+        Mantiene tus 5 favoritas y rellena de forma aleatoria con el banco 
+        hasta llegar al tamaño deseado (por ejemplo, 200 acciones).
+        """
+        # Eliminamos duplicados potenciales o tus favoritas del pool de sorteo
+        pool_disponible = list(set(self.banco_total_activos) - set(self.tus_favoritas))
+        
+        # Calculamos cuántas necesitamos sortear para rellenar el cupo
+        cuantas_sortear = tamano_total - len(self.tus_favoritas)
+        
+        # Seleccionamos una muestra aleatoria fresca para esta ejecución
+        muestra_aleatoria = random.sample(pool_disponible, min(cuantas_sortear, len(pool_disponible)))
+        
+        # La watchlist final combina tus fijas + la exploración mutante de hoy
+        watchlist_final = self.tus_favoritas + muestra_aleatoria
+        return watchlist_final
 
     def enviar_telegram(self, mensaje):
         print(f"[TELEGRAM LOG]:\n{mensaje}\n")
@@ -77,18 +108,17 @@ class PipelineTradingAlphaTelegram:
         rangos = pd.concat([high_low, high_close, low_close], axis=1)
         return rangos.max(axis=1).rolling(window=period).mean()
 
-    def escanear_y_detectar_auto(self):
-        print(f"[ESCÁNER] Iniciando barrido automático sobre {len(self.estado['watchlist_base'])} activos activos...")
+    def escanear_y_detectar_auto(self, watchlist):
+        print(f"[ESCÁNER] Iniciando barrido dinámico sobre {len(watchlist)} activos seleccionados hoy...")
         
-        tickers_string = " ".join(self.estado["watchlist_base"])
+        tickers_string = " ".join(watchlist)
         try:
-            # Descarga silenciosa en bloque
-            datos_mercado = yf.download(tickers_string, period="60d", group_by="ticker", progress=False, timeout=30)
+            datos_mercado = yf.download(tickers_string, period="60d", group_by="ticker", progress=False, timeout=40)
         except Exception as e:
             print(f"[ESCÁNER ERROR] Fallo al conectar con Yahoo Finance: {e}")
             return
 
-        for ticker in self.estado["watchlist_base"]:
+        for ticker in watchlist:
             try:
                 if ticker not in datos_mercado.columns.levels[0]:
                     continue
@@ -126,12 +156,12 @@ class PipelineTradingAlphaTelegram:
                         }
                         
                         msg = (
-                            f"🚀 *¡ACCIÓN DETECTADA AUTOMÁTICAMENTE!* 🚀\n\n"
+                            f"🚀 *¡EXPLORACIÓN COMPLETA: ACTIVO CAZADO!* 🚀\n\n"
                             f"📈 *Activo:* `{ticker}`\n"
                             f"💰 *Precio Entrada:* `${precio_entrada:.2f}`\n"
                             f"📊 *Anomalía Volumen:* `{ratio_volumen:.1f}x` MAV20\n"
                             f"🛡️ *Stop Loss Inicial:* `${stop_loss_inicial:.2f}` (2.5x ATR)\n"
-                            f"🎯 *Estrategia:* Compresión con Volumen Institucional"
+                            f"🎯 *Origen:* Radar Dinámico Aleatorio"
                         )
                         self.enviar_telegram(msg)
                         self.guardar_estado()
@@ -198,8 +228,20 @@ class PipelineTradingAlphaTelegram:
                 pass
 
 if __name__ == '__main__':
-    print("[CRON] Iniciando motor automático de detección ampliado y optimizado...")
+    print("[CRON] Iniciando motor inteligente con Rotación Exploratoria...")
+    
     bot = PipelineTradingAlphaTelegram()
-    bot.escanear_y_detectar_auto()
+    
+    # 1. El bot genera una lista de 200 acciones frescas (tus 5 favoritas + 195 aleatorias del banco)
+    watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=200)
+    
+    # Mensaje de control para saber qué está buscando hoy
+    bot.enviar_telegram(f"🔄 *Rotador Activo:* Analizando 200 activos (incluye tus 5 TOP + 195 rotativos del banco de exploración).")
+    
+    # 2. Escaneo en bloque de la lista mutante de hoy
+    bot.escanear_y_detectar_auto(watchlist_de_hoy)
+    
+    # 3. Gestión ininterrumpida de Trailing Stops de lo que ya esté abierto
     bot.gestionar_trailing_stops()
-    print("[CRON] Proceso finalizado en verde.")
+    
+    print("[CRON] Proceso exploratorio finalizado con éxito.")
