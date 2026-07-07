@@ -2,15 +2,19 @@
 import os
 import json
 import requests
+import logging
 import pandas as pd
 import numpy as np
 import yfinance as yf
+
+# SILENCIAR ADVERTENCIAS DE YFINANCE EN LOS LOGS
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
         """
         Pipeline Cuantitativo de Autodetección Masiva Ampliado (Yahoo Finance).
-        Analiza dinámicamente decenas de activos sin restricciones de API Key ni errores 401.
+        Versión ultra-limpia sin ruido en logs de Render.
         """
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
@@ -25,23 +29,23 @@ class PipelineTradingAlphaTelegram:
             except:
                 pass
         
-        # UNIVERSO AMPLADO AUTOMÁTICO (Biotech, Growth, IA, Cripto y Semiconductores)
+        # LISTA DEPURADA Y LIMPIA (Eliminados deslistados y corregido FSR)
         return {
             "watchlist_base": [
                 # Tus Favoritas de Cabecera
                 "CRDF", "IOVA", "ALT", "HUMA", "IREN", 
-                # Biotech & Pharma de Alta Volatilidad (Small/Mid Caps)
+                # Biotech & Pharma de Alta Volatilidad (Activas)
                 "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "MDGL", "VKTX", "CYTK",
-                "RIGL", "CTXR", "AGRX", "AVXL", "SAVA", "TIER", "TRIL", "BCRX", "KERX", "GERN",
-                # Cripto, Blockchain & Minería (Anomalías salvajes de volumen)
+                "RIGL", "CTXR", "AVXL", "BCRX", "GERN",
+                # Cripto, Blockchain & Minería
                 "MARA", "RIOT", "CLSK", "WULF", "COIN", "MSTR", "CIFR", "CORZ", "HUT", "BTBT",
                 # Inteligencia Artificial, Big Data & Crecimiento (Growth)
                 "PLTR", "SOFI", "HOOD", "AFRM", "UPST", "AI", "BBAI", "SOUN", "PATH", "C3AI",
                 # Semiconductores & Hardware de Alto Rendimiento
-                "AMD", "NVDA", "SMCI", "ARM", "TSM", "MU", "INTC", "MRVL", "CELH",
-                # Vehículos Eléctricos, Energía Limpia & Especulativas Activas
-                "RIVN", "LCID", "PLUG", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "Fisker", "NKLA",
-                # Gigantes Tecnológicos de Alta Liquidez (Para balancear rango de volatilidad)
+                "AMD", "NVDA", "SMCI", "ARM", "TSM", "MU", "INTC", "MRVL",
+                # Vehículos Eléctricos y Energía Limpia (Corregido FSR)
+                "RIVN", "LCID", "PLUG", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "FSR", "NKLA",
+                # Otras Activas de Alta Volatilidad
                 "BABA", "DKNG", "XPEV", "NIO", "LI", "JD", "PDD", "FUTU", "TIGR"
             ],
             "posiciones_abiertas": {}
@@ -74,11 +78,11 @@ class PipelineTradingAlphaTelegram:
         return rangos.max(axis=1).rolling(window=period).mean()
 
     def escanear_y_detectar_auto(self):
-        print(f"[ESCÁNER] Iniciando barrido automático sobre {len(self.estado['watchlist_base'])} activos de alto potencial...")
+        print(f"[ESCÁNER] Iniciando barrido automático sobre {len(self.estado['watchlist_base'])} activos activos...")
         
-        # Descarga masiva del mercado en un solo bloque ultra rápido
         tickers_string = " ".join(self.estado["watchlist_base"])
         try:
+            # Descarga silenciosa en bloque
             datos_mercado = yf.download(tickers_string, period="60d", group_by="ticker", progress=False, timeout=30)
         except Exception as e:
             print(f"[ESCÁNER ERROR] Fallo al conectar con Yahoo Finance: {e}")
@@ -93,19 +97,15 @@ class PipelineTradingAlphaTelegram:
                 if len(df) < 30:
                     continue
                 
-                # Cálculo de filtros cuantitativos
                 df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
                 df['ATR_14'] = self.calcular_atr(df, 14)
                 
                 hoy = df.iloc[-1]
                 
-                # Ignorar completamente si no tiene liquidez mínima operativa
                 if hoy['Vol_Media_20'] < 100000:
                     continue
                     
                 ratio_volumen = hoy['Volume'] / hoy['Vol_Media_20']
-                
-                # CONDICIÓN DE FILTRADO INSTITUCIONAL (>2.8 veces el volumen promedio)
                 anomalia_volumen = ratio_volumen > 2.8
                 
                 cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
@@ -113,7 +113,6 @@ class PipelineTradingAlphaTelegram:
                 absorcion_compras = (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6)
                 
                 if anomalia_volumen and precio_en_rango and absorcion_compras:
-                    # Si cumple todo y no está ya abierta, se caza automáticamente
                     if ticker not in self.estado["posiciones_abiertas"]:
                         atr_actual = hoy['ATR_14']
                         precio_entrada = hoy['Close']
@@ -127,8 +126,8 @@ class PipelineTradingAlphaTelegram:
                         }
                         
                         msg = (
-                            f"🚀 *¡ACCÓN DETECTADA AUTOMÁTICAMENTE!* 🚀\n\n"
-                            f"📈 *Activo Creado:* `{ticker}`\n"
+                            f"🚀 *¡ACCIÓN DETECTADA AUTOMÁTICAMENTE!* 🚀\n\n"
+                            f"📈 *Activo:* `{ticker}`\n"
                             f"💰 *Precio Entrada:* `${precio_entrada:.2f}`\n"
                             f"📊 *Anomalía Volumen:* `{ratio_volumen:.1f}x` MAV20\n"
                             f"🛡️ *Stop Loss Inicial:* `${stop_loss_inicial:.2f}` (2.5x ATR)\n"
@@ -137,7 +136,7 @@ class PipelineTradingAlphaTelegram:
                         self.enviar_telegram(msg)
                         self.guardar_estado()
                         
-            except Exception as e:
+            except:
                 pass
 
     def gestionar_trailing_stops(self):
@@ -166,14 +165,12 @@ class PipelineTradingAlphaTelegram:
                 pos = self.estado["posiciones_abiertas"][ticker]
                 rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                 
-                # Actualizar trailing stop si marca máximos crecientes
                 if precio_actual > pos["max_precio_visto"]:
                     pos["max_precio_visto"] = round(precio_actual, 4)
                     nuevo_stop = precio_actual - (2.2 * atr_actual)
                     if nuevo_stop > pos["stop_loss"]:
                         pos["stop_loss"] = round(nuevo_stop, 4)
                 
-                # Notificación por cada tramo del 5% capturado
                 if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 5.0:
                     pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
                     msg = (
@@ -186,7 +183,6 @@ class PipelineTradingAlphaTelegram:
                     self.enviar_telegram(msg)
                     self.guardar_estado()
                     
-                # Comprobación de salida
                 if precio_actual <= pos["stop_loss"]:
                     rendimiento_final = ((pos["stop_loss"] - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                     msg = (
@@ -202,14 +198,8 @@ class PipelineTradingAlphaTelegram:
                 pass
 
 if __name__ == '__main__':
-    print("[CRON] Iniciando motor automático de detección ampliado...")
-    
+    print("[CRON] Iniciando motor automático de detección ampliado y optimizado...")
     bot = PipelineTradingAlphaTelegram()
-    
-    # 1. Escaneo en bloque de los sectores calientes del mercado de EEUU
     bot.escanear_y_detectar_auto()
-    
-    # 2. Gestión automatizada de Trailing Stops
     bot.gestionar_trailing_stops()
-    
-    print("[CRON] Proceso finalizado correctamente.")
+    print("[CRON] Proceso finalizado en verde.")
