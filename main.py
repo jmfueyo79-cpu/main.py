@@ -7,24 +7,41 @@ import random
 import pandas as pd
 import yfinance as yf
 import time
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # SILENCIAR ADVERTENCIAS DE YFINANCE EN LOS LOGS
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+
+# --- SERVIDOR WEB AUXILIAR PARA SATISFACER A RENDER ---
+class WebServerHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write("🤖 Bot Alpha Operativo: Escáner de mercado activo.".encode("utf-8"))
+
+    def log_message(self, format, *args):
+        return # Silenciar los logs del servidor web para no ensuciar la pantalla
+
+def iniciar_servidor_web():
+    puerto = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
+    print(f"[WEB SERVER] Puerto {puerto} abierto con éxito para Render.")
+    server.serve_forever()
+# ------------------------------------------------------
 
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
         """
         Pipeline Cuantitativo Intradiario (Intervalo 30 Minutos).
-        Optimizado para ejecutarse de Lunes a Viernes de 16:00 a 22:00 con Cron-Job.org.
+        Optimizado para Web Service con puerto abierto.
         """
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
-        
-        # Tus fijas que NUNCA se quitan del radar
         self.tus_favoritas = ["CRDF", "IOVA", "ALT", "HUMA", "IREN"]
         
-        # BANCO MASIVO DE EXPLORACIÓN (+350 Activos Especulativos, Cripto, IA y Biotech)
         self.banco_total_activos = [
             # --- SECTOR BIOTECH & PHARMA ---
             "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "MDGL", "VKTX", "CYTK",
@@ -60,21 +77,16 @@ class PipelineTradingAlphaTelegram:
             try:
                 with open(self.archivo_estado, 'r') as f:
                     return json.load(f)
-            except:
-                pass
+            except: pass
         return {"posiciones_abiertas": {}}
 
     def guardar_estado(self):
         try:
             with open(self.archivo_estado, 'w') as f:
                 json.dump(self.estado, f, indent=4)
-        except:
-            pass
+        except: pass
 
     def generar_watchlist_exploratoria(self, tamano_total=100):
-        """
-        Mantiene tus 5 favoritas fijas y añade el resto de forma aleatoria del banco masivo.
-        """
         pool_disponible = list(set(self.banco_total_activos) - set(self.tus_favoritas))
         cuantas_sortear = tamano_total - len(self.tus_favoritas)
         muestra_aleatoria = random.sample(pool_disponible, min(cuantas_sortear, len(pool_disponible)))
@@ -85,25 +97,21 @@ class PipelineTradingAlphaTelegram:
             return
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
         payload = {"chat_id": self.telegram_chat_id, "text": mensaje, "parse_mode": "Markdown"}
-        try:
-            requests.post(url, json=payload, timeout=8)
-        except:
-            pass
+        try: requests.post(url, json=payload, timeout=8)
+        except: pass
 
     @staticmethod
     def calcular_atr(df, periodo=14):
         high_low = df['High'] - df['Low']
         high_close = (df['High'] - df['Close'].shift()).abs()
         low_close = (df['Low'] - df['Close'].shift()).abs()
-        rangos = pd.concat([high_low, high_close, low_close], axis=1)
-        return rangos.max(axis=1).rolling(window=period).mean()
+        return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(window=period=14).mean()
 
     def escanear_intradiario(self, watchlist):
         print(f"[ESCÁNER] Iniciando barrido intradiario sobre {len(watchlist)} activos...")
         tickers_string = " ".join(watchlist)
         
         try:
-            # Descarga de datos en marcos temporales de 30 minutos
             datos_mercado = yf.download(tickers_string, period="3d", interval="30m", group_by="ticker", progress=False, timeout=40)
         except Exception as e:
             print(f"[ESCÁNER ERROR] Fallo al conectar con Yahoo Finance: {e}")
@@ -111,65 +119,51 @@ class PipelineTradingAlphaTelegram:
 
         for ticker in watchlist:
             try:
-                if ticker not in datos_mercado.columns.levels[0]:
-                    continue
+                if ticker not in datos_mercado.columns.levels[0]: continue
                 df = datos_mercado[ticker].dropna()
-                
-                if len(df) < 25:
-                    continue
+                if len(df) < 25: continue
                 
                 df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
                 df['ATR_14'] = self.calcular_atr(df, 14)
-                
                 hoy = df.iloc[-1]
                 
-                if hoy['Vol_Media_20'] < 10000:  # Umbral mínimo de liquidez en la vela de 30m
-                    continue
+                if hoy['Vol_Media_20'] < 10000: continue
                     
                 ratio_volumen = hoy['Volume'] / hoy['Vol_Media_20']
-                anomalia_volumen = ratio_volumen > 2.8
-                
-                cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
-                precio_en_rango = cuerpo_vela < (hoy['ATR_14'] * 1.2)
-                absorcion_compras = (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6)
-                
-                if anomalia_volumen and precio_en_rango and absorcion_compras:
-                    if ticker not in self.estado["posiciones_abiertas"]:
-                        atr_actual = hoy['ATR_14']
-                        precio_entrada = hoy['Close']
-                        stop_loss_inicial = precio_entrada - (2.5 * atr_actual)
-                        
-                        self.estado["posiciones_abiertas"][ticker] = {
-                            "precio_entrada": round(precio_entrada, 4),
-                            "stop_loss": round(stop_loss_inicial, 4),
-                            "max_precio_visto": round(precio_entrada, 4),
-                            "ultimo_rendimiento_notificado": 0.0
-                        }
-                        
-                        msg = (
-                            f"🔥 *ALERTA INTRADIARIA RECIENTE (30m)* 🔥\n\n"
-                            f"📈 *Activo:* `{ticker}`\n"
-                            f"💰 *Precio Actual:* `${precio_entrada:.2f}`\n"
-                            f"📊 *Volumen Institucional:* `{ratio_volumen:.1f}x` MAV20\n"
-                            f"🛡️ *Stop Inicial Sugerido:* `${stop_loss_inicial:.2f}` (2.5x ATR)"
-                        )
-                        self.enviar_telegram(msg)
-                        self.guardar_estado()
-                        
-            except:
-                pass
+                if ratio_volumen > 2.8:
+                    cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
+                    if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
+                        if ticker not in self.estado["posiciones_abiertas"]:
+                            atr_actual = hoy['ATR_14']
+                            precio_entrada = hoy['Close']
+                            stop_loss_inicial = precio_entrada - (2.5 * atr_actual)
+                            
+                            self.estado["posiciones_abiertas"][ticker] = {
+                                "precio_entrada": round(precio_entrada, 4),
+                                "stop_loss": round(stop_loss_inicial, 4),
+                                "max_precio_visto": round(precio_entrada, 4),
+                                "ultimo_rendimiento_notificado": 0.0
+                            }
+                            
+                            msg = (
+                                f"🔥 *ALERTA INTRADIARIA RECIENTE (30m)* 🔥\n\n"
+                                f"📈 *Activo:* `{ticker}`\n"
+                                f"💰 *Precio Actual:* `${precio_entrada:.2f}`\n"
+                                f"📊 *Volumen Institucional:* `{ratio_volumen:.1f}x` MAV20\n"
+                                f"🛡️ *Stop Inicial Sugerido:* `${stop_loss_inicial:.2f}` (2.5x ATR)"
+                            )
+                            self.enviar_telegram(msg)
+                            self.guardar_estado()
+            except: pass
 
     def gestionar_trailing_stops(self):
-        if not self.estado["posiciones_abiertas"]:
-            return
-
+        if not self.estado["posiciones_abiertas"]: return
         tickers_abiertos = list(self.estado["posiciones_abiertas"].keys())
         tickers_string = " ".join(tickers_abiertos)
         
         try:
             datos_mercado = yf.download(tickers_string, period="3d", interval="30m", group_by="ticker", progress=False, timeout=15)
-        except:
-            return
+        except: return
 
         for ticker in tickers_abiertos:
             try:
@@ -212,26 +206,28 @@ class PipelineTradingAlphaTelegram:
                     self.enviar_telegram(msg)
                     del self.estado["posiciones_abiertas"][ticker]
                     self.guardar_estado()
-            except:
-                pass
+            except: pass
 
 if __name__ == '__main__':
-    print("[BOT] Iniciando ciclo de escaneo intradiario 30 minutos...")
+    # 1. Arrancar el mini servidor web en un hilo paralelo para calmar a Render de inmediato
+    t = threading.Thread(target=iniciar_servidor_web, daemon=True)
+    t.start()
+    
+    # Darle un segundo de cortesía para asegurar la apertura del puerto
+    time.sleep(1)
+    
+    print("[BOT] Iniciando ciclo de escaneo intradiario de 30 minutos...")
     bot = PipelineTradingAlphaTelegram()
     
-    # Generamos una lista combinada de 100 activos (Tus 5 TOP fijos + 95 rotativos del banco)
+    # 2. Análisis y ejecución
     watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
-    
-    # Notificación obligatoria de inicio de ciclo a Telegram
     bot.enviar_telegram(f"🔄 *Rotador Activo (30m):* Analizando 100 activos en mercado abierto.")
     
-    # Ejecutamos el análisis intradiario y las salidas por trailing
     bot.escanear_intradiario(watchlist_de_hoy)
     bot.gestionar_trailing_stops()
     
-    print("[BOT] Ciclo completado con éxito. Entrando en modo reposo controlado...")
+    print("[BOT] Ciclo completado. El servidor web sigue activo atendiendo a Render...")
     
-    # Bucle de mantenimiento de 5 minutos: mantiene el deploy en VERDE dentro de Render
-    # y libera el recurso a tiempo antes del siguiente toque de Cron-job.org
+    # Mantener vivo el proceso principal para que no se apague el puerto
     while True:
         time.sleep(300)
