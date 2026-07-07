@@ -3,3 +3,4 @@ requests
 flask
 pandas
 numpy
+yfinance
