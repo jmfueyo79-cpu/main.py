@@ -1,14 +1,16 @@
 import time
-import os
 import threading
+import telepot
 from flask import Flask
 
-# Configuración Optimizada
+# Configuración final consolidada
 CONFIG = {
     "RVOL_THRESHOLD": 2.2,
     "PRICE_MIN": 2.0,
     "PRICE_MAX": 22.0,
-    "CONFIRMATION_MINUTES": 3
+    "CONFIRMATION_MINUTES": 3,
+    "TELEGRAM_TOKEN": "8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys",
+    "CHAT_ID": "2047038250"
 }
 
 app = Flask(__name__)
@@ -19,31 +21,22 @@ def home():
 
 class GestorFrancotirador:
     def __init__(self):
-        # Lectura directa de variables de entorno
-        self.token = os.environ.get("TELEGRAM_TOKEN")
-        self.chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-        
-        # Log inmediato para diagnóstico
-        print(f"DEBUG: Token detectado: {'SÍ' if self.token else 'NO'}")
-        print(f"DEBUG: Chat ID detectado: {'SÍ' if self.chat_id else 'NO'}")
-        
-        if not self.token or not self.chat_id:
-            print("ERROR: Las variables TELEGRAM_TOKEN o TELEGRAM_CHAT_ID no están configuradas.")
-        else:
-            print("🚀 BOT PROFESIONAL: Trailing Stop + Confirmación 3min Activo")
+        try:
+            self.bot = telepot.Bot(CONFIG["TELEGRAM_TOKEN"])
+            print("🚀 BOT PROFESIONAL: Conectado a Telegram")
+            self.bot.sendMessage(CONFIG["CHAT_ID"], "🚀 Bot iniciado y listo para monitorizar. Configuración cargada.")
+        except Exception as e:
+            print(f"ERROR crítico al conectar con Telegram: {e}")
 
     def ejecutar(self):
-        # Aquí va la lógica de escaneo y envío a Telegram
+        # Aquí continúa tu lógica de escaneo de mercado
         pass
 
 if __name__ == "__main__":
-    # Iniciar servidor web Flask en hilo separado
-    def run_flask():
-        app.run(host='0.0.0.0', port=10000)
+    # Servidor Flask en segundo plano
+    threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000), daemon=True).start()
     
-    threading.Thread(target=run_flask, daemon=True).start()
-    
-    # Iniciar gestor
+    # Inicialización del gestor
     gestor = GestorFrancotirador()
     
     while True:
@@ -53,4 +46,3 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error en bucle principal: {e}")
             time.sleep(60)
-            
