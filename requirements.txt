@@ -1,3 +1,5 @@
 telepot
 requests
 flask
+pandas
+numpy
