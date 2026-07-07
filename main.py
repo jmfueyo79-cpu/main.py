@@ -19,10 +19,10 @@ class WebServerHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write("🤖 Bot Alpha Operativo: Escáner de mercado activo.".encode("utf-8"))
+        self.wfile.write("🤖 Bot Alpha Operativo: Escáner de Small Caps Activo.".encode("utf-8"))
 
     def log_message(self, format, *args):
-        return # Silenciar los logs del servidor web para no ensuciar la pantalla
+        return  # Silenciar logs del servidor para mantener limpia la consola
 
 def iniciar_servidor_web():
     puerto = int(os.environ.get("PORT", 10000))
@@ -34,40 +34,35 @@ def iniciar_servidor_web():
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
         """
-        Pipeline Cuantitativo Intradiario (Intervalo 30 Minutos).
-        Optimizado para Web Service con puerto abierto.
+        Pipeline Cuantitativo de Alta Beta (Intervalo 30 Minutos).
+        Filtrado estricto para buscar rendimientos explosivos (>50%) en acciones de $2 a $22.
         """
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
+        
+        # Tus favoritas fijas (Si entran en rango de precio, el bot las analiza; si no, las salta)
         self.tus_favoritas = ["CRDF", "IOVA", "ALT", "HUMA", "IREN"]
         
+        # BANCO MASIVO DE EXPLORACIÓN OPTIMIZADO PARA SMALL CAPS / BIOTECH / CRIPTO MINERS
         self.banco_total_activos = [
-            # --- SECTOR BIOTECH & PHARMA ---
-            "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "MDGL", "VKTX", "CYTK",
+            # --- SECTOR BIOTECH & PHARMA EXPLOSIVAS ---
+            "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "CYTK",
             "RIGL", "CTXR", "AVXL", "BCRX", "GERN", "CRSP", "NTLA", "BEAM", "EDIT", "VERV",
-            "BLUE", "SGMO", "SRPT", "BMRN", "PTCT", "ALNY", "IONIS", "EXAS", "GH", "GUARD",
-            "AADI", "ABVC", "ACAD", "ACER", "ACET", "ACHV", "ACIU", "ACRS", "ACST", "ACTG",
-            "ALEC", "ALIM", "ALKS", "ALLR", "ALNA", "ALXO", "AMED", "AMTI", "ANGI", "ANKR",
-            "APLS", "APLT", "APRE", "APTO", "APYX", "AQST", "ARDX", "ARQT", "ARWR", "ASMB",
-            "ASND", "ATNX", "ATOM", "ATOS", "ATRA", "ATRC", "AURA", "AUPH", "AUR", "AVDL",
-            "AVIR", "AVTE", "AXSM", "AXLA", "AZTA", "BCAB", "BCDA", "BMEA", "BNGO", "BPMC",
-            "BTAI", "CARS", "CARA", "CATX", "CCXI", "CDMO", "CDNA", "CDTX", "CDXC", "CELC",
+            "BLUE", "SGMO", "SRPT", "PTCT", "AADI", "ABVC", "ACER", "ACET", "ACHV", "ACIU", 
+            "ACRS", "ACST", "ACTG", "ALEC", "ALIM", "ALLR", "ALNA", "ALXO", "AMTI", "ANKR",
+            "APLT", "APRE", "APTO", "APYX", "AQST", "ARDX", "ARQT", "ASMB", "ATNX", "ATOM", 
+            "ATOS", "ATRA", "ATRC", "AURA", "AVDL", "AVIR", "AVTE", "AXLA", "AZTA", "BCAB", 
+            "BCDA", "BMEA", "BNGO", "BTAI", "CARA", "CATX", "CDMO", "CDTX", "CDXC", "CELC",
             "CERE", "CGEN", "CGON", "CHRS", "CHYI", "CLDX", "CLSD", "CLVS", "CMPS", "CMRX",
-            "CNCE", "CNTA", "CNTG", "COGT", "COLL", "CORT", "CRNX", "CRBU", "CRMD", "CRTX",
-            # --- SECTOR CRIPTO, MINERÍA & BLOCKCHAIN ---
-            "MARA", "RIOT", "CLSK", "WULF", "COIN", "MSTR", "CIFR", "CORZ", "HUT", "BTBT",
+            "CNCE", "CNTA", "CNTG", "COGT", "CRNX", "CRBU", "CRMD", "CRTX",
+            # --- SECTOR CRIPTO, MINERÍA & BLOCKCHAIN (ALTA BETA) ---
+            "MARA", "RIOT", "CLSK", "WULF", "CIFR", "CORZ", "HUT", "BTBT",
             "SDIG", "COWG", "MIGI", "CAN", "BOF", "BTCM", "GREE", "SOS", "BITF", "DGHI",
-            # --- SECTOR IA, ROBÓTICA & BIG DATA ---
-            "PLTR", "SOFI", "HOOD", "AFRM", "UPST", "AI", "BBAI", "SOUN", "PATH", "C3AI",
-            "NVDA", "AMD", "SMCI", "ARM", "TSM", "MU", "INTC", "MRVL", "PLUG", "SNOW",
-            "ASAN", "MDB", "DDOG", "CRWD", "NET", "OKTA", "ZS", "PANW", "FTNT", "QLYS",
-            "S", "U", "UNITY", "RBLX", "SE", "MELI", "SHOP", "SQ", "PYPL", "DOCU",
-            # --- SECTOR VEHÍCULOS ELÉCTRICOS, ENERGÍA LIMPIA & TECNOLOGÍA ---
-            "RIVN", "LCID", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "NKLA", "QS",
-            "ENVX", "FREY", "EVGO", "BE", "TPWR", "STEM", "SUNW", "MAXN", "CSIQ",
-            "BABA", "DKNG", "XPEV", "NIO", "LI", "JD", "PDD", "FUTU", "TIGR", "TSLA",
-            "WKHS", "GOEV", "HYLN", "PTRA", "XOS", "REE", "CANO", "ZEV", "ARGO"
+            # --- SECTOR IA, ROBÓTICA & SMALL TECH ---
+            "SOFI", "HOOD", "UPST", "BBAI", "SOUN", "PATH", "C3AI", "PLUG",
+            "UNITY", "RBLX", "ENVX", "FREY", "EVGO", "STEM", "SUNW", "MAXN", 
+            "XPEV", "NIO", "FUTU", "TIGR", "WKHS", "GOEV", "HYLN", "REE", "ZEV"
         ]
         
         self.estado = self.cargar_estado()
@@ -105,7 +100,7 @@ class PipelineTradingAlphaTelegram:
         high_low = df['High'] - df['Low']
         high_close = (df['High'] - df['Close'].shift()).abs()
         low_close = (df['Low'] - df['Close'].shift()).abs()
-        return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(window=period).mean()
+        return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(window=periodo).mean()
 
     def escanear_intradiario(self, watchlist):
         print(f"[ESCÁNER] Iniciando barrido intradiario sobre {len(watchlist)} activos...")
@@ -123,32 +118,37 @@ class PipelineTradingAlphaTelegram:
                 df = datos_mercado[ticker].dropna()
                 if len(df) < 25: continue
                 
+                hoy = df.iloc[-1]
+                precio_actual = hoy['Close']
+                
+                # ─── FILTRO CRUCIAL DE PRECIO OBJETIVO ($2 A $22) ───
+                if precio_actual < 2.0 or precio_actual > 22.0:
+                    continue  # Si el precio no está en el rango explosivo, ignora el activo
+                
                 df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
                 df['ATR_14'] = self.calcular_atr(df, 14)
-                hoy = df.iloc[-1]
                 
-                if hoy['Vol_Media_20'] < 10000: continue
+                if df['Vol_Media_20'].iloc[-1] < 10000: continue
                     
-                ratio_volumen = hoy['Volume'] / hoy['Vol_Media_20']
+                ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
                 if ratio_volumen > 2.8:
                     cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
                     if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
                         if ticker not in self.estado["posiciones_abiertas"]:
                             atr_actual = hoy['ATR_14']
-                            precio_entrada = hoy['Close']
-                            stop_loss_inicial = precio_entrada - (2.5 * atr_actual)
+                            stop_loss_inicial = precio_actual - (2.5 * atr_actual)
                             
                             self.estado["posiciones_abiertas"][ticker] = {
-                                "precio_entrada": round(precio_entrada, 4),
+                                "precio_entrada": round(precio_actual, 4),
                                 "stop_loss": round(stop_loss_inicial, 4),
-                                "max_precio_visto": round(precio_entrada, 4),
+                                "max_precio_visto": round(precio_actual, 4),
                                 "ultimo_rendimiento_notificado": 0.0
                             }
                             
                             msg = (
-                                f"🔥 *ALERTA INTRADIARIA RECIENTE (30m)* 🔥\n\n"
+                                f"🚀 *COHETE INTRADIARIO DETECTADO ($2-$22)* 🚀\n\n"
                                 f"📈 *Activo:* `{ticker}`\n"
-                                f"💰 *Precio Actual:* `${precio_entrada:.2f}`\n"
+                                f"💰 *Precio Entrada:* `${precio_actual:.2f}`\n"
                                 f"📊 *Volumen Institucional:* `{ratio_volumen:.1f}x` MAV20\n"
                                 f"🛡️ *Stop Inicial Sugerido:* `${stop_loss_inicial:.2f}` (2.5x ATR)"
                             )
@@ -209,25 +209,21 @@ class PipelineTradingAlphaTelegram:
             except: pass
 
 if __name__ == '__main__':
-    # 1. Arrancar el mini servidor web en un hilo paralelo para calmar a Render de inmediato
+    # 1. Servidor web en hilo paralelo para calmar a Render al instante
     t = threading.Thread(target=iniciar_servidor_web, daemon=True)
     t.start()
-    
-    # Darle un segundo de cortesía para asegurar la apertura del puerto
     time.sleep(1)
     
-    print("[BOT] Iniciando ciclo de escaneo intradiario de 30 minutos...")
+    print("[BOT] Iniciando ciclo de escaneo intradiario filtrado ($2 - $22)...")
     bot = PipelineTradingAlphaTelegram()
     
-    # 2. Análisis y ejecución
+    # 2. Selección de activos y ejecución del radar
     watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
-    bot.enviar_telegram(f"🔄 *Rotador Activo (30m):* Analizando 100 activos en mercado abierto.")
+    bot.enviar_telegram(f"🔄 *Filtro Explosivo Activo ($2-$22):* Escaneando 100 activos de alta beta.")
     
     bot.escanear_intradiario(watchlist_de_hoy)
     bot.gestionar_trailing_stops()
     
-    print("[BOT] Ciclo completado. El servidor web sigue activo atendiendo a Render...")
-    
-    # Mantener vivo el proceso principal para que no se apague el puerto
+    print("[BOT] Ciclo completado. Manteniendo contenedor activo para Render...")
     while True:
         time.sleep(300)
