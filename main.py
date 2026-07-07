@@ -105,7 +105,7 @@ class PipelineTradingAlphaTelegram:
         high_low = df['High'] - df['Low']
         high_close = (df['High'] - df['Close'].shift()).abs()
         low_close = (df['Low'] - df['Close'].shift()).abs()
-        return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(window=period=14).mean()
+        return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(window=period).mean()
 
     def escanear_intradiario(self, watchlist):
         print(f"[ESCÁNER] Iniciando barrido intradiario sobre {len(watchlist)} activos...")
