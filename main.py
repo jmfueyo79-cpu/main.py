@@ -10,21 +10,18 @@ import time
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# SILENCIAR ADVERTENCIAS DE YFINANCE EN LOS LOGS
+# SILENCIAR ADVERTENCIAS EN LOS LOGS
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
 
-# --- SERVIDOR WEB AUXILIAR SILENCIOSO PARA RENDER Y CRON-JOB ---
+# --- SERVIDOR WEB AUXILIAR SILENCIOSO ---
 class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        # Respondemos solo con "OK" para evitar el error "salida demasiado grande" en cron-job
         self.wfile.write(b"OK")
-
-    def log_message(self, format, *args):
-        return # Silenciar por completo los logs de peticiones web en la consola
+    def log_message(self, format, *args): return
 
 def iniciar_servidor_web():
     puerto = int(os.environ.get("PORT", 10000))
@@ -34,18 +31,14 @@ def iniciar_servidor_web():
 
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
-        """
-        Pipeline Cuantitativo de Alta Beta (Intervalo 30 Minutos).
-        Mantiene TODA la lógica de gestión de riesgo, Trailing Stops y rotación aleatoria.
-        """
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
         
-        # Tus favoritas fijas que siempre se analizan
+        # Tus favoritas fijas (Siempre en primera línea de análisis)
         self.tus_favoritas = ["CRDF", "IOVA", "ALT", "HUMA", "IREN"]
         
-        # BANCO MASIVO COMPLETO DE EXPLORACIÓN (+140 Activos de Alta Beta)
+        # BANCO MASIVO EXTENDIDO (+160 Activos de Alta Beta e IA/Small Caps)
         self.banco_total_activos = [
             "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "CYTK", "RIGL", "CTXR", 
             "AVXL", "BCRX", "GERN", "CRSP", "NTLA", "BEAM", "EDIT", "VERV", "BLUE", "SGMO", 
@@ -60,12 +53,9 @@ class PipelineTradingAlphaTelegram:
             "COGT", "COLL", "CORT", "CRNX", "CRBU", "CRMD", "CRTX", "MARA", "RIOT", "CLSK", 
             "WULF", "CIFR", "CORZ", "HUT", "BTBT", "SDIG", "COWG", "MIGI", "CAN", "BOF", 
             "BTCM", "GREE", "SOS", "BITF", "DGHI", "SOFI", "HOOD", "AFRM", "UPST", "AI", 
-            "BBAI", "SOUN", "PATH", "C3AI", "PLUG", "SNOW", "ASAN", "MDB", "DDOG", "CRWD", 
-            "NET", "OKTA", "ZS", "PANW", "FTNT", "QLYS", "S", "U", "UNITY", "RBLX", "SE", 
-            "SHOP", "SQ", "PYPL", "DOCU", "RIVN", "LCID", "TLRY", "FCEL", "BLNK", "RUN", 
-            "CHPT", "NKLA", "QS", "ENVX", "FREY", "EVGO", "BE", "TPWR", "STEM", "SUNW", 
-            "MAXN", "CSIQ", "BABA", "DKNG", "XPEV", "NIO", "LI", "JD", "PDD", "FUTU", 
-            "TIGR", "WKHS", "GOEV", "HYLN", "PTRA", "XOS", "REE", "CANO", "ZEV", "ARGO"
+            "BBAI", "SOUN", "PATH", "C3AI", "PLUG", "UNITY", "RBLX", "ENVX", "FREY", "EVGO", 
+            "BE", "STEM", "SUNW", "MAXN", "CSIQ", "XPEV", "NIO", "LI", "FUTU", "TIGR", 
+            "WKHS", "GOEV", "HYLN", "REE", "ZEV", "BITQ", "WGMI", "BLOK", "MSTR", "DM"
         ]
         
         self.estado = self.cargar_estado()
@@ -73,19 +63,18 @@ class PipelineTradingAlphaTelegram:
     def cargar_estado(self):
         if os.path.exists(self.archivo_estado):
             try:
-                with open(self.archivo_estado, 'r') as f:
-                    return json.load(f)
+                with open(self.archivo_estado, 'r') as f: return json.load(f)
             except: pass
         return {"posiciones_abiertas": {}}
 
     def guardar_estado(self):
         try:
-            with open(self.archivo_estado, 'w') as f:
-                json.dump(self.estado, f, indent=4)
+            with open(self.archivo_estado, 'w') as f: json.dump(self.estado, f, indent=4)
         except: pass
 
-    def generar_watchlist_exploratoria(self, tamano_total=100):
+    def generar_watchlist_exploratoria(self, tamano_total=250):
         pool_disponible = list(set(self.banco_total_activos) - set(self.tus_favoritas))
+        # Si el banco total tiene menos de lo pedido, coge todos los disponibles
         cuantas_sortear = tamano_total - len(self.tus_favoritas)
         muestra_aleatoria = random.sample(pool_disponible, min(cuantas_sortear, len(pool_disponible)))
         return self.tus_favoritas + muestra_aleatoria
@@ -104,56 +93,67 @@ class PipelineTradingAlphaTelegram:
         return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(window=periodo).mean()
 
     def escanear_intradiario(self, watchlist):
-        tickers_string = " ".join(watchlist)
-        try:
-            datos_mercado = yf.download(tickers_string, period="3d", interval="30m", group_by="ticker", progress=False, timeout=40)
-        except:
-            return
-
-        for ticker in watchlist:
+        tamano_bloque = 50
+        # Troceamos la watchlist en pedazos de 50 activos
+        bloques = [watchlist[i:i + tamano_bloque] for i in range(0, len(watchlist), tamano_bloque)]
+        
+        for bloque in bloques:
+            tickers_string = " ".join(bloque)
             try:
-                if ticker not in datos_mercado.columns.levels[0]: continue
-                df = datos_mercado[ticker].dropna()
-                if len(df) < 25: continue
-                
-                hoy = df.iloc[-1]
-                precio_actual = hoy['Close']
-                
-                # ─── FILTRO CRUCIAL DE PRECIO OBJETIVO ($2 A $22) ───
-                if precio_actual < 2.0 or precio_actual > 22.0:
-                    continue
-                
-                df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
-                df['ATR_14'] = self.calcular_atr(df, 14)
-                
-                if df['Vol_Media_20'].iloc[-1] < 10000: continue
+                datos_mercado = yf.download(tickers_string, period="3d", interval="30m", group_by="ticker", progress=False, timeout=30)
+            except:
+                continue
+
+            for ticker in bloque:
+                try:
+                    # Gestión de descarga si es un único ticker en el bloque o varios
+                    if len(bloque) > 1:
+                        if ticker not in datos_mercado.columns.levels[0]: continue
+                        df = datos_mercado[ticker].dropna()
+                    else:
+                        df = datos_mercado.dropna()
+                        
+                    if len(df) < 25: continue
                     
-                ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
-                
-                if ratio_volumen > 2.8:
-                    cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
-                    if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
-                        if ticker not in self.estado["posiciones_abiertas"]:
-                            atr_actual = hoy['ATR_14']
-                            stop_loss_inicial = precio_actual - (2.5 * atr_actual)
-                            
-                            self.estado["posiciones_abiertas"][ticker] = {
-                                "precio_entrada": round(precio_actual, 4),
-                                "stop_loss": round(stop_loss_inicial, 4),
-                                "max_precio_visto": round(precio_actual, 4),
-                                "ultimo_rendimiento_notificado": 0.0
-                            }
-                            
-                            msg = (
-                                f"🚀 *COHETE INTRADIARIO DETECTADO ($2-$22)* 🚀\n\n"
-                                f"📈 *Activo:* `{ticker}`\n"
-                                f"💰 *Precio Entrada:* `${precio_actual:.2f}`\n"
-                                f"📊 *Volumen Institucional:* `{ratio_volumen:.1f}x` MAV20\n"
-                                f"🛡️ *Stop Inicial Sugerido:* `${stop_loss_inicial:.2f}` (2.5x ATR)"
-                            )
-                            self.enviar_telegram(msg)
-                            self.guardar_estado()
-            except: pass
+                    hoy = df.iloc[-1]
+                    precio_actual = hoy['Close']
+                    
+                    # FILTRO DE PRECIO RADICAL DE COHETES ($2 A $22)
+                    if precio_actual < 2.0 or precio_actual > 22.0: continue
+                    
+                    df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
+                    df['ATR_14'] = self.calcular_atr(df, 14)
+                    
+                    if df['Vol_Media_20'].iloc[-1] < 10000: continue
+                        
+                    ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
+                    
+                    if ratio_volumen > 2.8:
+                        cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
+                        if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
+                            if ticker not in self.estado["posiciones_abiertas"]:
+                                atr_actual = hoy['ATR_14']
+                                stop_loss_inicial = precio_actual - (2.5 * atr_actual)
+                                
+                                self.estado["posiciones_abiertas"][ticker] = {
+                                    "precio_entrada": round(precio_actual, 4),
+                                    "stop_loss": round(stop_loss_inicial, 4),
+                                    "max_precio_visto": round(precio_actual, 4),
+                                    "ultimo_rendimiento_notificado": 0.0
+                                }
+                                
+                                msg = (
+                                    f"🚀 *COHETE INTRADIARIO DETECTADO ($2-$22)* 🚀\n\n"
+                                    f"📈 *Activo:* `{ticker}`\n"
+                                    f"💰 *Precio Entrada:* `${precio_actual:.2f}`\n"
+                                    f"📊 *Volumen Institucional:* `{ratio_volumen:.1f}x` MAV20\n"
+                                    f"🛡️ *Stop Inicial Sugerido:* `${stop_loss_inicial:.2f}` (2.5x ATR)"
+                                )
+                                self.enviar_telegram(msg)
+                                self.guardar_estado()
+                except: pass
+            # Breve respiro de 1.5 segundos entre bloques para evitar bloqueos de IP
+            time.sleep(1.5)
 
     def gestionar_trailing_stops(self):
         if not self.estado["posiciones_abiertas"]: return
@@ -208,23 +208,18 @@ class PipelineTradingAlphaTelegram:
             except: pass
 
 if __name__ == '__main__':
-    # 1. Levantar servidor web mínimo para Render
-    t = threading.Thread(target=iniciar_servidor_web, daemon=True)
-    t.start()
+    threading.Thread(target=iniciar_servidor_web, daemon=True).start()
     time.sleep(1)
     
     bot = PipelineTradingAlphaTelegram()
     
-    # 2. Generación aleatoria de 100 activos respetando tus 5 favoritos fijos
-    watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
+    # Configuramos el radar al máximo potencial viable: 250 activos de golpe
+    watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=250)
     
-    # 🔥 MENSAJE DE CONFIRMACIÓN DIRECTO A TELEGRAM SIN ENSUCIAR LA CONSOLA 🔥
-    bot.enviar_telegram("🔄 *Filtro Explosivo Activo ($2-$22):* Escaneando 100 activos de alta beta.")
+    bot.enviar_telegram(f"⚡ *Súper Radar Activo:* Escaneando {len(watchlist_de_hoy)} activos en bloques de 50.")
     
-    # 3. Ejecución completa del core cuantitativo
     bot.escanear_intradiario(watchlist_de_hoy)
     bot.gestionar_trailing_stops()
     
-    # Mantenemos vivo el proceso en Render
     while True:
         time.sleep(300)
