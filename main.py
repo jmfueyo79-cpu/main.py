@@ -113,7 +113,7 @@ class PipelineTradingAlphaTelegram:
         for bloque in bloques:
             tickers_string = " ".join(bloque)
             try:
-                # COMPRESIÓN DE INTERVALO A 15M: Caza la anomalía institucional al nacer
+                # COMPRESIÓN DE INTERVALO A 15M
                 datos_mercado = yf.download(tickers_string, period="3d", interval="15m", group_by="ticker", progress=False, timeout=30)
             except:
                 continue
@@ -131,7 +131,7 @@ class PipelineTradingAlphaTelegram:
                     hoy = df.iloc[-1]
                     precio_actual = hoy['Close']
                     
-                    # FILTRO DE PRECIO OBJETIVO DE ALTA EXPLOSIVIDAD ($2 A $22)
+                    # FILTRO DE PRECIO OBJETIVO ($2 A $22)
                     if precio_actual < 2.0 or precio_actual > 22.0: continue
                     
                     df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
@@ -141,13 +141,24 @@ class PipelineTradingAlphaTelegram:
                         
                     ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
                     
-                    # SENSIBILIDAD INCREMENTADA: Umbral optimizado a 2.2x volumen MAV20
+                    # FILTRO BASE DE DETECCIÓN (2.2x volumen MAV20)
                     if ratio_volumen > 2.2:
                         cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
                         if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
                             if ticker not in self.estado["posiciones_abiertas"]:
                                 atr_actual = hoy['ATR_14']
                                 stop_loss_inicial = precio_actual - (2.5 * atr_actual)
+                                
+                                # --- MOTOR DE CLASIFICACIÓN DINÁMICA DE SEÑALES ---
+                                if ratio_volumen >= 4.0:
+                                    categoria = "🟥 SÚPER COHETE (>50% Potencial)"
+                                    detalles_cat = "Anomalía crítica de Volumen Institucional (Ballenas acumulando agresivo)."
+                                elif 2.5 <= ratio_volumen < 4.0:
+                                    categoria = "🟨 TENDENCIA FUERTE (15%-30% Potencial)"
+                                    detalles_cat = "Rompimiento limpio con volumen de confirmación sólido."
+                                else:
+                                    categoria = "🟦 MOMENTUM ESTÁNDAR (5%-15% Potencial)"
+                                    detalles_cat = "Continuación o scalping rápido intradiario."
                                 
                                 self.estado["posiciones_abiertas"][ticker] = {
                                     "precio_entrada": round(precio_actual, 4),
@@ -157,11 +168,15 @@ class PipelineTradingAlphaTelegram:
                                 }
                                 
                                 msg = (
-                                    f"🚀 *ALERTA ULTRA: SÚPER RADAR 15M* 🚀\n\n"
-                                    f"📈 *Activo:* `{ticker}`\n"
+                                    f"📡 *NUEVA ALERTA RADAR DE VOLUMEN (15M)* 📡\n"
+                                    f"───────────────────────\n"
+                                    f"🚨 *RANGO DE ACCIÓN:* `{categoria}`\n"
+                                    f"🎯 *Activo:* `{ticker}`\n"
                                     f"💰 *Precio Entrada:* `${precio_actual:.2f}`\n"
-                                    f"📊 *Volumen:* `{ratio_volumen:.1f}x` MAV20 (Acumulación Alta)\n"
-                                    f"🛡️ *Stop Inicial:* `${stop_loss_inicial:.2f}`"
+                                    f"📊 *Fuerza Volumen:* `{ratio_volumen:.1f}x` MAV20\n"
+                                    f"🛡️ *Stop Loss Inicial:* `${stop_loss_inicial:.2f}`\n"
+                                    f"───────────────────────\n"
+                                    f"💡 _Nota: {detalles_cat}_"
                                 )
                                 self.enviar_telegram(msg)
                                 self.guardar_estado()
@@ -236,5 +251,5 @@ if __name__ == '__main__':
     bot.escanear_intradiario(watchlist_de_hoy)
     bot.gestionar_trailing_stops()
     
-    # Pausa de seguridad antes de que el entorno cierre la ejecución del script
+    # Pausa de seguridad antes de finalizar la llamada externa de la tarea programada
     time.sleep(5)
