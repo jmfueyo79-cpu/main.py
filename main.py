@@ -12,22 +12,23 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # SILENCIAR ADVERTENCIAS DE YFINANCE EN LOS LOGS
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+logging.getLogger('requests').setLevel(logging.CRITICAL)
 
-# --- SERVIDOR WEB AUXILIAR PARA SATISFACER A RENDER ---
+# --- SERVIDOR WEB AUXILIAR SILENCIOSO PARA RENDER Y CRON-JOB ---
 class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write("🤖 Bot Alpha Operativo: Escáner de Small Caps Activo.".encode("utf-8"))
+        # Respondemos solo con "OK" para evitar el error "salida demasiado grande"
+        self.wfile.write(b"OK")
 
     def log_message(self, format, *args):
-        return  # Silenciar logs del servidor para mantener limpia la consola
+        return # Silenciar por completo los logs de peticiones web
 
 def iniciar_servidor_web():
     puerto = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
-    print(f"[WEB SERVER] Puerto {puerto} abierto con éxito para Render.")
     server.serve_forever()
 # ------------------------------------------------------
 
@@ -35,34 +36,36 @@ class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
         """
         Pipeline Cuantitativo de Alta Beta (Intervalo 30 Minutos).
-        Filtrado estricto para buscar rendimientos explosivos (>50%) en acciones de $2 a $22.
+        Mantiene TODA la lógica de gestión de riesgo, Trailing Stops y rotación aleatoria.
         """
         self.telegram_token = telegram_token
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
         
-        # Tus favoritas fijas (Si entran en rango de precio, el bot las analiza; si no, las salta)
+        # Tus favoritas fijas que siempre se analizan
         self.tus_favoritas = ["CRDF", "IOVA", "ALT", "HUMA", "IREN"]
         
-        # BANCO MASIVO DE EXPLORACIÓN OPTIMIZADO PARA SMALL CAPS / BIOTECH / CRIPTO MINERS
+        # BANCO MASIVO COMPLETO DE EXPLORACIÓN (+140 Activos de Alta Beta)
         self.banco_total_activos = [
-            # --- SECTOR BIOTECH & PHARMA EXPLOSIVAS ---
-            "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "CYTK",
-            "RIGL", "CTXR", "AVXL", "BCRX", "GERN", "CRSP", "NTLA", "BEAM", "EDIT", "VERV",
-            "BLUE", "SGMO", "SRPT", "PTCT", "AADI", "ABVC", "ACER", "ACET", "ACHV", "ACIU", 
-            "ACRS", "ACST", "ACTG", "ALEC", "ALIM", "ALLR", "ALNA", "ALXO", "AMTI", "ANKR",
-            "APLT", "APRE", "APTO", "APYX", "AQST", "ARDX", "ARQT", "ASMB", "ATNX", "ATOM", 
-            "ATOS", "ATRA", "ATRC", "AURA", "AVDL", "AVIR", "AVTE", "AXLA", "AZTA", "BCAB", 
-            "BCDA", "BMEA", "BNGO", "BTAI", "CARA", "CATX", "CDMO", "CDTX", "CDXC", "CELC",
-            "CERE", "CGEN", "CGON", "CHRS", "CHYI", "CLDX", "CLSD", "CLVS", "CMPS", "CMRX",
-            "CNCE", "CNTA", "CNTG", "COGT", "CRNX", "CRBU", "CRMD", "CRTX",
-            # --- SECTOR CRIPTO, MINERÍA & BLOCKCHAIN (ALTA BETA) ---
-            "MARA", "RIOT", "CLSK", "WULF", "CIFR", "CORZ", "HUT", "BTBT",
-            "SDIG", "COWG", "MIGI", "CAN", "BOF", "BTCM", "GREE", "SOS", "BITF", "DGHI",
-            # --- SECTOR IA, ROBÓTICA & SMALL TECH ---
-            "SOFI", "HOOD", "UPST", "BBAI", "SOUN", "PATH", "C3AI", "PLUG",
-            "UNITY", "RBLX", "ENVX", "FREY", "EVGO", "STEM", "SUNW", "MAXN", 
-            "XPEV", "NIO", "FUTU", "TIGR", "WKHS", "GOEV", "HYLN", "REE", "ZEV"
+            "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "CYTK", "RIGL", "CTXR", 
+            "AVXL", "BCRX", "GERN", "CRSP", "NTLA", "BEAM", "EDIT", "VERV", "BLUE", "SGMO", 
+            "SRPT", "PTCT", "ALNY", "IONIS", "EXAS", "GH", "GUARD", "AADI", "ABVC", "ACAD", 
+            "ACER", "ACET", "ACHV", "ACIU", "ACRS", "ACST", "ACTG", "ALEC", "ALIM", "ALKS", 
+            "ALLR", "ALNA", "ALXO", "AMED", "AMTI", "ANGI", "ANKR", "APLS", "APLT", "APRE", 
+            "APTO", "APYX", "AQST", "ARDX", "ARQT", "ARWR", "ASMB", "ASND", "ATNX", "ATOM", 
+            "ATOS", "ATRA", "ATRC", "AURA", "AUPH", "AUR", "AVDL", "AVIR", "AVTE", "AXSM", 
+            "AXLA", "AZTA", "BCAB", "BCDA", "BMEA", "BNGO", "BPMC", "BTAI", "CARS", "CARA", 
+            "CATX", "CCXI", "CDMO", "CDNA", "CDTX", "CDXC", "CELC", "CERE", "CGEN", "CGON", 
+            "CHRS", "CHYI", "CLDX", "CLSD", "CLVS", "CMPS", "CMRX", "CNCE", "CNTA", "CNTG", 
+            "COGT", "COLL", "CORT", "CRNX", "CRBU", "CRMD", "CRTX", "MARA", "RIOT", "CLSK", 
+            "WULF", "CIFR", "CORZ", "HUT", "BTBT", "SDIG", "COWG", "MIGI", "CAN", "BOF", 
+            "BTCM", "GREE", "SOS", "BITF", "DGHI", "SOFI", "HOOD", "AFRM", "UPST", "AI", 
+            "BBAI", "SOUN", "PATH", "C3AI", "PLUG", "SNOW", "ASAN", "MDB", "DDOG", "CRWD", 
+            "NET", "OKTA", "ZS", "PANW", "FTNT", "QLYS", "S", "U", "UNITY", "RBLX", "SE", 
+            "SHOP", "SQ", "PYPL", "DOCU", "RIVN", "LCID", "TLRY", "FCEL", "BLNK", "RUN", 
+            "CHPT", "NKLA", "QS", "ENVX", "FREY", "EVGO", "BE", "TPWR", "STEM", "SUNW", 
+            "MAXN", "CSIQ", "BABA", "DKNG", "XPEV", "NIO", "LI", "JD", "PDD", "FUTU", 
+            "TIGR", "WKHS", "GOEV", "HYLN", "PTRA", "XOS", "REE", "CANO", "ZEV", "ARGO"
         ]
         
         self.estado = self.cargar_estado()
@@ -82,14 +85,13 @@ class PipelineTradingAlphaTelegram:
         except: pass
 
     def generar_watchlist_exploratoria(self, tamano_total=100):
+        """Mantiene tus fijos y añade el resto de forma aleatoria del banco masivo"""
         pool_disponible = list(set(self.banco_total_activos) - set(self.tus_favoritas))
         cuantas_sortear = tamano_total - len(self.tus_favoritas)
         muestra_aleatoria = random.sample(pool_disponible, min(cuantas_sortear, len(pool_disponible)))
         return self.tus_favoritas + muestra_aleatoria
 
     def enviar_telegram(self, mensaje):
-        if not self.telegram_token or not self.telegram_chat_id:
-            return
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
         payload = {"chat_id": self.telegram_chat_id, "text": mensaje, "parse_mode": "Markdown"}
         try: requests.post(url, json=payload, timeout=8)
@@ -103,13 +105,11 @@ class PipelineTradingAlphaTelegram:
         return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(window=periodo).mean()
 
     def escanear_intradiario(self, watchlist):
-        print(f"[ESCÁNER] Iniciando barrido intradiario sobre {len(watchlist)} activos...")
         tickers_string = " ".join(watchlist)
-        
         try:
+            # Descarga 100% silenciosa para no saturar los logs de cron-job
             datos_mercado = yf.download(tickers_string, period="3d", interval="30m", group_by="ticker", progress=False, timeout=40)
-        except Exception as e:
-            print(f"[ESCÁNER ERROR] Fallo al conectar con Yahoo Finance: {e}")
+        except:
             return
 
         for ticker in watchlist:
@@ -123,7 +123,7 @@ class PipelineTradingAlphaTelegram:
                 
                 # ─── FILTRO CRUCIAL DE PRECIO OBJETIVO ($2 A $22) ───
                 if precio_actual < 2.0 or precio_actual > 22.0:
-                    continue  # Si el precio no está en el rango explosivo, ignora el activo
+                    continue
                 
                 df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
                 df['ATR_14'] = self.calcular_atr(df, 14)
@@ -131,6 +131,8 @@ class PipelineTradingAlphaTelegram:
                 if df['Vol_Media_20'].iloc[-1] < 10000: continue
                     
                 ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
+                
+                # Condición de volumen institucional y absorción de compras
                 if ratio_volumen > 2.8:
                     cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
                     if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
@@ -177,12 +179,14 @@ class PipelineTradingAlphaTelegram:
                 pos = self.estado["posiciones_abiertas"][ticker]
                 rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                 
+                # Gestión dinámica del Trailing Stop basado en el máximo visto
                 if precio_actual > pos["max_precio_visto"]:
                     pos["max_precio_visto"] = round(precio_actual, 4)
                     nuevo_stop = precio_actual - (2.2 * atr_actual)
                     if nuevo_stop > pos["stop_loss"]:
                         pos["stop_loss"] = round(nuevo_stop, 4)
                 
+                # Avisos parciales cada 5% de subida
                 if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 5.0:
                     pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
                     msg = (
@@ -195,6 +199,7 @@ class PipelineTradingAlphaTelegram:
                     self.enviar_telegram(msg)
                     self.guardar_estado()
                     
+                # Salida por stop alcanzado
                 if precio_actual <= pos["stop_loss"]:
                     rendimiento_final = ((pos["stop_loss"] - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                     msg = (
@@ -209,21 +214,20 @@ class PipelineTradingAlphaTelegram:
             except: pass
 
 if __name__ == '__main__':
-    # 1. Servidor web en hilo paralelo para calmar a Render al instante
+    # 1. Levantar servidor web mínimo para Render
     t = threading.Thread(target=iniciar_servidor_web, daemon=True)
     t.start()
     time.sleep(1)
     
-    print("[BOT] Iniciando ciclo de escaneo intradiario filtrado ($2 - $22)...")
     bot = PipelineTradingAlphaTelegram()
     
-    # 2. Selección de activos y ejecución del radar
+    # 2. Generación aleatoria de 100 activos respetando tus 5 favoritos fijos
     watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
-    bot.enviar_telegram(f"🔄 *Filtro Explosivo Activo ($2-$22):* Escaneando 100 activos de alta beta.")
     
+    # 3. Ejecución completa del core cuantitativo
     bot.escanear_intradiario(watchlist_de_hoy)
     bot.gestionar_trailing_stops()
     
-    print("[BOT] Ciclo completado. Manteniendo contenedor activo para Render...")
+    # Mantenemos vivo el proceso en Render
     while True:
         time.sleep(300)
