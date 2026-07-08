@@ -10,11 +10,11 @@ import time
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# SILENCIAR ADVERTENCIAS EN LOS LOGS
+# SILENCIAR ADVERTENCIAS EN LOS LOGS PARA EVITAR ERRORES DE BUFFER
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
 
-# --- SERVIDOR WEB AUXILIAR SILENCIOSO ---
+# --- SERVIDOR WEB AUXILIAR SILENCIOSO (Evita caídas por inactividad en entornos en la nube) ---
 class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -27,7 +27,7 @@ def iniciar_servidor_web():
     puerto = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
     server.serve_forever()
-# ------------------------------------------------------
+# --------------------------------------------------------------------------------------
 
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
@@ -35,7 +35,7 @@ class PipelineTradingAlphaTelegram:
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
         
-        # Tus favoritas fijas (Analizadas de forma obligatoria en cada ciclo)
+        # TUS FAVORITAS FIJAS (Analizadas de forma obligatoria en cada ciclo de 15 minutos)
         self.tus_favoritas = ["CRDF", "IOVA", "ALT", "HUMA", "IREN"]
         
         # BANCO MASIVO EXTENDIDO (+320 Activos de Alta Beta, Biotech, Cripto & Small Caps)
@@ -66,9 +66,9 @@ class PipelineTradingAlphaTelegram:
             "MURA", "IMCR", "KROS", "RCKT", "ABOS", "VTYX", "ASND", "MOR", "IDYA", "CGEM",
             # --- EXTRA SMALL CAPS DE MOMENTUM, ENERGY & REVERSAL ---
             "BABA", "DKNG", "JD", "PDD", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "NKLA", 
-            "QS", "JD", "BILI", "TAL", "EDU", "GOTU", "UXIN", "YALA", "IQ", "HUYA",
-            "DADA", "FINV", "LX", "TIGR", "UPLI", "GATO", "MAG", "ASM", "GPL", "NAK",
-            "AAU", "PLG", "THM", "WRN", "TRX", "GSV", "CDXS", "VERI", "CLSK", "XAIR",
+            "QS", "BILI", "TAL", "EDU", "GOTU", "UXIN", "YALA", "IQ", "HUYA",
+            "DADA", "FINV", "LX", "UPLI", "GATO", "MAG", "ASM", "GPL", "NAK",
+            "AAU", "PLG", "THM", "WRN", "TRX", "GSV", "CDXS", "VERI", "XAIR",
             "PALI", "BTTX", "TCBP", "ISPR", "SNGX", "OCUP", "TENX", "PRSO", "SOPA", "LIPO",
             "OPTT", "WATT", "CEI", "HUSA", "IMPP", "REI", "PED", "MREO", "SNDL", "ACB"
         ]
@@ -113,7 +113,8 @@ class PipelineTradingAlphaTelegram:
         for bloque in bloques:
             tickers_string = " ".join(bloque)
             try:
-                datos_mercado = yf.download(tickers_string, period="3d", interval="30m", group_by="ticker", progress=False, timeout=30)
+                # COMPRESIÓN DE INTERVALO A 15M: Caza la anomalía institucional al nacer
+                datos_mercado = yf.download(tickers_string, period="3d", interval="15m", group_by="ticker", progress=False, timeout=30)
             except:
                 continue
 
@@ -130,7 +131,7 @@ class PipelineTradingAlphaTelegram:
                     hoy = df.iloc[-1]
                     precio_actual = hoy['Close']
                     
-                    # FILTRO DE PRECIO DE COHETES ($2 A $22)
+                    # FILTRO DE PRECIO OBJETIVO DE ALTA EXPLOSIVIDAD ($2 A $22)
                     if precio_actual < 2.0 or precio_actual > 22.0: continue
                     
                     df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
@@ -140,7 +141,8 @@ class PipelineTradingAlphaTelegram:
                         
                     ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
                     
-                    if ratio_volumen > 2.8:
+                    # SENSIBILIDAD INCREMENTADA: Umbral optimizado a 2.2x volumen MAV20
+                    if ratio_volumen > 2.2:
                         cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
                         if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
                             if ticker not in self.estado["posiciones_abiertas"]:
@@ -155,16 +157,16 @@ class PipelineTradingAlphaTelegram:
                                 }
                                 
                                 msg = (
-                                    f"🚀 *COHETE INTRADIARIO DETECTADO ($2-$22)* 🚀\n\n"
+                                    f"🚀 *ALERTA ULTRA: SÚPER RADAR 15M* 🚀\n\n"
                                     f"📈 *Activo:* `{ticker}`\n"
                                     f"💰 *Precio Entrada:* `${precio_actual:.2f}`\n"
-                                    f"📊 *Volumen Institucional:* `{ratio_volumen:.1f}x` MAV20\n"
-                                    f"🛡️ *Stop Inicial Sugerido:* `${stop_loss_inicial:.2f}` (2.5x ATR)"
+                                    f"📊 *Volumen:* `{ratio_volumen:.1f}x` MAV20 (Acumulación Alta)\n"
+                                    f"🛡️ *Stop Inicial:* `${stop_loss_inicial:.2f}`"
                                 )
                                 self.enviar_telegram(msg)
                                 self.guardar_estado()
                 except: pass
-            time.sleep(1.5)
+            time.sleep(1.0)
 
     def gestionar_trailing_stops(self):
         if not self.estado["posiciones_abiertas"]: return
@@ -172,7 +174,7 @@ class PipelineTradingAlphaTelegram:
         tickers_string = " ".join(tickers_abiertos)
         
         try:
-            datos_mercado = yf.download(tickers_string, period="3d", interval="30m", group_by="ticker", progress=False, timeout=15)
+            datos_mercado = yf.download(tickers_string, period="3d", interval="15m", group_by="ticker", progress=False, timeout=15)
         except: return
 
         for ticker in tickers_abiertos:
@@ -187,31 +189,34 @@ class PipelineTradingAlphaTelegram:
                 pos = self.estado["posiciones_abiertas"][ticker]
                 rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                 
+                # Gestión dinámica del Trailing Stop basado en máximos alcanzados
                 if precio_actual > pos["max_precio_visto"]:
                     pos["max_precio_visto"] = round(precio_actual, 4)
                     nuevo_stop = precio_actual - (2.2 * atr_actual)
                     if nuevo_stop > pos["stop_loss"]:
                         pos["stop_loss"] = round(nuevo_stop, 4)
                 
+                # Notificación automática cada 5% de escalada limpia
                 if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 5.0:
                     pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
                     msg = (
-                        f"⚡ *ACTUALIZACIÓN RENDIMIENTO* ⚡\n\n"
+                        f"⚡ *SUBIDA CONTROLADA* ⚡\n\n"
                         f"💎 *Activo:* `{ticker}`\n"
-                        f"💵 *Precio Actual:* `${precio_actual:.2f}`\n"
-                        f"🔥 *Rendimiento:* `+{rendimiento_acumulado:.2f}%`\n"
-                        f"🛡️ *Trailing Stop Protegido:* `${pos['stop_loss']:.2f}`"
+                        f"💵 *Precio:* `${precio_actual:.2f}`\n"
+                        f"🔥 *Beneficio actual:* `+{rendimiento_acumulado:.2f}%`\n"
+                        f"🛡️ *Ajuste de Stop:* `${pos['stop_loss']:.2f}`"
                     )
                     self.enviar_telegram(msg)
                     self.guardar_estado()
                     
+                # Ejecución de la salida por Trailing Stop
                 if precio_actual <= pos["stop_loss"]:
                     rendimiento_final = ((pos["stop_loss"] - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                     msg = (
                         f"🚨 *DISPARO DE TRAILING STOP* 🚨\n\n"
                         f"📉 *Activo:* `{ticker}`\n"
-                        f"🚪 *Precio Salida Ejecutado:* `${pos['stop_loss']:.2f}`\n"
-                        f"💰 *Rendimiento Neto Final:* `+{rendimiento_final:.2f}%`"
+                        f"🚪 *Precio Salida:* `${pos['stop_loss']:.2f}`\n"
+                        f"💰 *Resultado Neto:* `+{rendimiento_final:.2f}%`"
                     )
                     self.enviar_telegram(msg)
                     del self.estado["posiciones_abiertas"][ticker]
@@ -219,18 +224,17 @@ class PipelineTradingAlphaTelegram:
             except: pass
 
 if __name__ == '__main__':
+    # Iniciar servidor Keep-Alive en segundo plano
     threading.Thread(target=iniciar_servidor_web, daemon=True).start()
     time.sleep(1)
     
+    # Ejecución del pipeline por ciclo de 15 minutos
     bot = PipelineTradingAlphaTelegram()
-    
-    # Marcamos un objetivo de escaneo de 200 activos por ciclo (4 bloques de 50)
     watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=200)
     
-    bot.enviar_telegram(f"⚡ *Súper Radar Activo:* Escaneando {len(watchlist_de_hoy)} activos aleatorios (en bloques de 50).")
-    
+    # Procesar mercado
     bot.escanear_intradiario(watchlist_de_hoy)
     bot.gestionar_trailing_stops()
     
-    while True:
-        time.sleep(300)
+    # Pausa de seguridad antes de que el entorno cierre la ejecución del script
+    time.sleep(5)
