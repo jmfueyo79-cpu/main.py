@@ -35,11 +35,22 @@ class PipelineTradingAlphaTelegram:
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
         
-        # Tus favoritas fijas (Siempre en primera línea de análisis)
+        # Tus favoritas fijas (Analizadas de forma obligatoria en cada ciclo)
         self.tus_favoritas = ["CRDF", "IOVA", "ALT", "HUMA", "IREN"]
         
-        # BANCO MASIVO EXTENDIDO (+160 Activos de Alta Beta e IA/Small Caps)
+        # BANCO MASIVO EXTENDIDO (+320 Activos de Alta Beta, Biotech, Cripto & Small Caps)
         self.banco_total_activos = [
+            # --- SECTOR CRIPTO, MINERÍA & BLOCKCHAIN ---
+            "MARA", "RIOT", "CLSK", "WULF", "CIFR", "CORZ", "HUT", "BTBT", "SDIG", "COWG", 
+            "MIGI", "CAN", "BOF", "BTCM", "GREE", "SOS", "BITF", "DGHI", "BITQ", "WGMI", 
+            "BLOK", "MSTR", "CONL", "COIN",
+            # --- SECTOR IA, SEMICONDUCTORES, ROBÓTICA & TECH ---
+            "SOFI", "HOOD", "AFRM", "UPST", "AI", "BBAI", "SOUN", "PATH", "C3AI", "PLUG", 
+            "UNITY", "RBLX", "ENVX", "FREY", "EVGO", "BE", "STEM", "SUNW", "MAXN", "CSIQ", 
+            "XPEV", "NIO", "LI", "FUTU", "TIGR", "WKHS", "GOEV", "HYLN", "REE", "ZEV", 
+            "DM", "PRST", "AEYE", "BMR", "CXAI", "MKFG", "IKT", "LUNR", "SIDU", "VLD",
+            "QUBT", "RGTI", "IONQ", "QMCO", "KOPN", "WAVS", "POET", "BOUG", "ASTR", "PLTR",
+            # --- SECTOR BIOTECH & MICRO-PHARMA EXPLOSIVAS ---
             "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "CYTK", "RIGL", "CTXR", 
             "AVXL", "BCRX", "GERN", "CRSP", "NTLA", "BEAM", "EDIT", "VERV", "BLUE", "SGMO", 
             "SRPT", "PTCT", "ALNY", "IONIS", "EXAS", "GH", "GUARD", "AADI", "ABVC", "ACAD", 
@@ -50,12 +61,16 @@ class PipelineTradingAlphaTelegram:
             "AXLA", "AZTA", "BCAB", "BCDA", "BMEA", "BNGO", "BPMC", "BTAI", "CARS", "CARA", 
             "CATX", "CCXI", "CDMO", "CDNA", "CDTX", "CDXC", "CELC", "CERE", "CGEN", "CGON", 
             "CHRS", "CHYI", "CLDX", "CLSD", "CLVS", "CMPS", "CMRX", "CNCE", "CNTA", "CNTG", 
-            "COGT", "COLL", "CORT", "CRNX", "CRBU", "CRMD", "CRTX", "MARA", "RIOT", "CLSK", 
-            "WULF", "CIFR", "CORZ", "HUT", "BTBT", "SDIG", "COWG", "MIGI", "CAN", "BOF", 
-            "BTCM", "GREE", "SOS", "BITF", "DGHI", "SOFI", "HOOD", "AFRM", "UPST", "AI", 
-            "BBAI", "SOUN", "PATH", "C3AI", "PLUG", "UNITY", "RBLX", "ENVX", "FREY", "EVGO", 
-            "BE", "STEM", "SUNW", "MAXN", "CSIQ", "XPEV", "NIO", "LI", "FUTU", "TIGR", 
-            "WKHS", "GOEV", "HYLN", "REE", "ZEV", "BITQ", "WGMI", "BLOK", "MSTR", "DM"
+            "COGT", "COLL", "CORT", "CRNX", "CRBU", "CRMD", "CRTX", "VNDA", "TLSA", "PRTA",
+            "INSM", "BBIO", "SRRK", "KNSA", "RLAY", "RYTM", "PLI", "XENE", "ZEAL", "MRUS",
+            "MURA", "IMCR", "KROS", "RCKT", "ABOS", "VTYX", "ASND", "MOR", "IDYA", "CGEM",
+            # --- EXTRA SMALL CAPS DE MOMENTUM, ENERGY & REVERSAL ---
+            "BABA", "DKNG", "JD", "PDD", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "NKLA", 
+            "QS", "JD", "BILI", "TAL", "EDU", "GOTU", "UXIN", "YALA", "IQ", "HUYA",
+            "DADA", "FINV", "LX", "TIGR", "UPLI", "GATO", "MAG", "ASM", "GPL", "NAK",
+            "AAU", "PLG", "THM", "WRN", "TRX", "GSV", "CDXS", "VERI", "CLSK", "XAIR",
+            "PALI", "BTTX", "TCBP", "ISPR", "SNGX", "OCUP", "TENX", "PRSO", "SOPA", "LIPO",
+            "OPTT", "WATT", "CEI", "HUSA", "IMPP", "REI", "PED", "MREO", "SNDL", "ACB"
         ]
         
         self.estado = self.cargar_estado()
@@ -72,9 +87,8 @@ class PipelineTradingAlphaTelegram:
             with open(self.archivo_estado, 'w') as f: json.dump(self.estado, f, indent=4)
         except: pass
 
-    def generar_watchlist_exploratoria(self, tamano_total=250):
+    def generar_watchlist_exploratoria(self, tamano_total=200):
         pool_disponible = list(set(self.banco_total_activos) - set(self.tus_favoritas))
-        # Si el banco total tiene menos de lo pedido, coge todos los disponibles
         cuantas_sortear = tamano_total - len(self.tus_favoritas)
         muestra_aleatoria = random.sample(pool_disponible, min(cuantas_sortear, len(pool_disponible)))
         return self.tus_favoritas + muestra_aleatoria
@@ -94,7 +108,6 @@ class PipelineTradingAlphaTelegram:
 
     def escanear_intradiario(self, watchlist):
         tamano_bloque = 50
-        # Troceamos la watchlist en pedazos de 50 activos
         bloques = [watchlist[i:i + tamano_bloque] for i in range(0, len(watchlist), tamano_bloque)]
         
         for bloque in bloques:
@@ -106,7 +119,6 @@ class PipelineTradingAlphaTelegram:
 
             for ticker in bloque:
                 try:
-                    # Gestión de descarga si es un único ticker en el bloque o varios
                     if len(bloque) > 1:
                         if ticker not in datos_mercado.columns.levels[0]: continue
                         df = datos_mercado[ticker].dropna()
@@ -118,7 +130,7 @@ class PipelineTradingAlphaTelegram:
                     hoy = df.iloc[-1]
                     precio_actual = hoy['Close']
                     
-                    # FILTRO DE PRECIO RADICAL DE COHETES ($2 A $22)
+                    # FILTRO DE PRECIO DE COHETES ($2 A $22)
                     if precio_actual < 2.0 or precio_actual > 22.0: continue
                     
                     df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
@@ -152,7 +164,6 @@ class PipelineTradingAlphaTelegram:
                                 self.enviar_telegram(msg)
                                 self.guardar_estado()
                 except: pass
-            # Breve respiro de 1.5 segundos entre bloques para evitar bloqueos de IP
             time.sleep(1.5)
 
     def gestionar_trailing_stops(self):
@@ -213,10 +224,10 @@ if __name__ == '__main__':
     
     bot = PipelineTradingAlphaTelegram()
     
-    # Configuramos el radar al máximo potencial viable: 250 activos de golpe
-    watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=250)
+    # Marcamos un objetivo de escaneo de 200 activos por ciclo (4 bloques de 50)
+    watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=200)
     
-    bot.enviar_telegram(f"⚡ *Súper Radar Activo:* Escaneando {len(watchlist_de_hoy)} activos en bloques de 50.")
+    bot.enviar_telegram(f"⚡ *Súper Radar Activo:* Escaneando {len(watchlist_de_hoy)} activos aleatorios (en bloques de 50).")
     
     bot.escanear_intradiario(watchlist_de_hoy)
     bot.gestionar_trailing_stops()
