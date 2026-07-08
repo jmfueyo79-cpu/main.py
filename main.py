@@ -20,11 +20,11 @@ class WebServerHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        # Respondemos solo con "OK" para evitar el error "salida demasiado grande"
+        # Respondemos solo con "OK" para evitar el error "salida demasiado grande" en cron-job
         self.wfile.write(b"OK")
 
     def log_message(self, format, *args):
-        return # Silenciar por completo los logs de peticiones web
+        return # Silenciar por completo los logs de peticiones web en la consola
 
 def iniciar_servidor_web():
     puerto = int(os.environ.get("PORT", 10000))
@@ -85,7 +85,6 @@ class PipelineTradingAlphaTelegram:
         except: pass
 
     def generar_watchlist_exploratoria(self, tamano_total=100):
-        """Mantiene tus fijos y añade el resto de forma aleatoria del banco masivo"""
         pool_disponible = list(set(self.banco_total_activos) - set(self.tus_favoritas))
         cuantas_sortear = tamano_total - len(self.tus_favoritas)
         muestra_aleatoria = random.sample(pool_disponible, min(cuantas_sortear, len(pool_disponible)))
@@ -107,7 +106,6 @@ class PipelineTradingAlphaTelegram:
     def escanear_intradiario(self, watchlist):
         tickers_string = " ".join(watchlist)
         try:
-            # Descarga 100% silenciosa para no saturar los logs de cron-job
             datos_mercado = yf.download(tickers_string, period="3d", interval="30m", group_by="ticker", progress=False, timeout=40)
         except:
             return
@@ -132,7 +130,6 @@ class PipelineTradingAlphaTelegram:
                     
                 ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
                 
-                # Condición de volumen institucional y absorción de compras
                 if ratio_volumen > 2.8:
                     cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
                     if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
@@ -179,14 +176,12 @@ class PipelineTradingAlphaTelegram:
                 pos = self.estado["posiciones_abiertas"][ticker]
                 rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                 
-                # Gestión dinámica del Trailing Stop basado en el máximo visto
                 if precio_actual > pos["max_precio_visto"]:
                     pos["max_precio_visto"] = round(precio_actual, 4)
                     nuevo_stop = precio_actual - (2.2 * atr_actual)
                     if nuevo_stop > pos["stop_loss"]:
                         pos["stop_loss"] = round(nuevo_stop, 4)
                 
-                # Avisos parciales cada 5% de subida
                 if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 5.0:
                     pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
                     msg = (
@@ -199,7 +194,6 @@ class PipelineTradingAlphaTelegram:
                     self.enviar_telegram(msg)
                     self.guardar_estado()
                     
-                # Salida por stop alcanzado
                 if precio_actual <= pos["stop_loss"]:
                     rendimiento_final = ((pos["stop_loss"] - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                     msg = (
@@ -223,6 +217,9 @@ if __name__ == '__main__':
     
     # 2. Generación aleatoria de 100 activos respetando tus 5 favoritos fijos
     watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
+    
+    # 🔥 MENSAJE DE CONFIRMACIÓN DIRECTO A TELEGRAM SIN ENSUCIAR LA CONSOLA 🔥
+    bot.enviar_telegram("🔄 *Filtro Explosivo Activo ($2-$22):* Escaneando 100 activos de alta beta.")
     
     # 3. Ejecución completa del core cuantitativo
     bot.escanear_intradiario(watchlist_de_hoy)
