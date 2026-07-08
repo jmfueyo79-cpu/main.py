@@ -7,12 +7,30 @@ import random
 import pandas as pd
 import yfinance as yf
 import time
+import threading
 from datetime import datetime
 import pytz
+from concurrent.futures import ThreadPoolExecutor
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # SILENCIAR ADVERTENCIAS EN LOS LOGS PARA OPTIMIZAR VELOCIDAD
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
+
+# --- SERVIDOR WEB AUXILIAR (Obligatorio para que Render no cancele el Deploy) ---
+class WebServerHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args): return
+
+def iniciar_servidor_web():
+    puerto = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
+    server.serve_forever()
+# --------------------------------------------------------------------------------------
 
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
@@ -70,13 +88,13 @@ class PipelineTradingAlphaTelegram:
             with open(self.archivo_estado, 'w') as f: json.dump(self.estado, f, indent=4)
         except: pass
 
-    def generar_watchlist_exploratoria(self, tamano_total=140):
+    def generar_watchlist_exploratoria(self, tamano_total=100):
         return random.sample(self.banco_total_activos, min(tamano_total, len(self.banco_total_activos)))
 
     def enviar_telegram(self, mensaje):
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
         payload = {"chat_id": self.telegram_chat_id, "text": mensaje, "parse_mode": "Markdown"}
-        try: requests.post(url, json=payload, timeout=5)
+        try: requests.post(url, json=payload, timeout=4)
         except: pass
 
     @staticmethod
@@ -86,78 +104,78 @@ class PipelineTradingAlphaTelegram:
         low_close = (df['Low'] - df['Close'].shift()).abs()
         return pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(window=periodo).mean()
 
-    def escanear_intradiario(self, watchlist):
+    def procesar_un_bloque(self, bloque):
+        tickers_string = " ".join(bloque)
+        try:
+            datos_mercado = yf.download(tickers_string, period="2d", interval="15m", group_by="ticker", progress=False, timeout=10)
+        except: return
+
+        for ticker in bloque:
+            try:
+                if len(bloque) > 1:
+                    if ticker not in datos_mercado.columns.levels[0]: continue
+                    df = datos_mercado[ticker].dropna()
+                else:
+                    df = datos_mercado.dropna()
+                    
+                if len(df) < 16: continue
+                
+                hoy = df.iloc[-1]
+                precio_actual = hoy['Close']
+                
+                if precio_actual < 2.0 or precio_actual > 22.0: continue
+                
+                df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
+                df['ATR_14'] = self.calcular_atr(df, 14)
+                
+                if df['Vol_Media_20'].iloc[-1] < 10000: continue
+                    
+                ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
+                
+                if ratio_volumen > 2.2:
+                    cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
+                    if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
+                        if ticker not in self.estado["posiciones_abiertas"]:
+                            atr_actual = hoy['ATR_14']
+                            stop_loss_inicial = precio_actual - (2.5 * atr_actual)
+                            
+                            if ratio_volumen >= 4.0:
+                                categoria = "🟥 SÚPER COHETE (>50% Potencial)"
+                                detalles_cat = "Anomalía crítica de Volumen Institucional (Ballenas acumulando agresivo)."
+                            elif 2.5 <= ratio_volumen < 4.0:
+                                categoria = "🟨 TENDENCIA FUERTE (15%-30% Potencial)"
+                                detalles_cat = "Rompimiento limpio con volumen de confirmación sólido."
+                            else:
+                                categoria = "🟦 MOMENTUM ESTÁNDAR (5%-15% Potencial)"
+                                detalles_cat = "Continuación o scalping rápido intradiario."
+                            
+                            self.estado["posiciones_abiertas"][ticker] = {
+                                "precio_entrada": round(precio_actual, 4),
+                                "stop_loss": round(stop_loss_inicial, 4),
+                                "max_precio_visto": round(precio_actual, 4),
+                                "ultimo_rendimiento_notificado": 0.0
+                            }
+                            
+                            msg = (
+                                f"📡 *NUEVA ALERTA RADAR DE VOLUMEN (15M)* 📡\n"
+                                f"───────────────────────\n"
+                                f"🚨 *RANGO DE ACCIÓN:* `{categoria}`\n"
+                                f"🎯 *Activo:* `{ticker}`\n"
+                                f"💰 *Precio Entrada:* `${precio_actual:.2f}`\n"
+                                f"📊 *Fuerza Volumen:* `{ratio_volumen:.1f}x` MAV20\n"
+                                f"🛡️ *Stop Loss Inicial:* `${stop_loss_inicial:.2f}`\n"
+                                f"───────────────────────\n"
+                                f"💡 _Nota: {detalles_cat}_"
+                            )
+                            self.enviar_telegram(msg)
+                            self.guardar_estado()
+            except: pass
+
+    def escanear_intradiario_concurrente(self, watchlist):
         tamano_bloque = 20
         bloques = [watchlist[i:i + tamano_bloque] for i in range(0, len(watchlist), tamano_bloque)]
-        
-        for bloque in bloques:
-            tickers_string = " ".join(bloque)
-            try:
-                datos_mercado = yf.download(tickers_string, period="3d", interval="15m", group_by="ticker", progress=False, timeout=15)
-            except:
-                continue
-
-            for ticker in bloque:
-                try:
-                    if len(bloque) > 1:
-                        if ticker not in datos_mercado.columns.levels[0]: continue
-                        df = datos_mercado[ticker].dropna()
-                    else:
-                        df = datos_mercado.dropna()
-                        
-                    if len(df) < 25: continue
-                    
-                    hoy = df.iloc[-1]
-                    precio_actual = hoy['Close']
-                    
-                    if precio_actual < 2.0 or precio_actual > 22.0: continue
-                    
-                    df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
-                    df['ATR_14'] = self.calcular_atr(df, 14)
-                    
-                    if df['Vol_Media_20'].iloc[-1] < 10000: continue
-                        
-                    ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
-                    
-                    if ratio_volumen > 2.2:
-                        cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
-                        if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
-                            if ticker not in self.estado["posiciones_abiertas"]:
-                                atr_actual = hoy['ATR_14']
-                                stop_loss_inicial = precio_actual - (2.5 * atr_actual)
-                                
-                                if ratio_volumen >= 4.0:
-                                    categoria = "🟥 SÚPER COHETE (>50% Potencial)"
-                                    detalles_cat = "Anomalía crítica de Volumen Institucional (Ballenas acumulando agresivo)."
-                                elif 2.5 <= ratio_volumen < 4.0:
-                                    categoria = "🟨 TENDENCIA FUERTE (15%-30% Potencial)"
-                                    detalles_cat = "Rompimiento limpio con volumen de confirmación sólido."
-                                else:
-                                    categoria = "🟦 MOMENTUM ESTÁNDAR (5%-15% Potencial)"
-                                    detalles_cat = "Continuación o scalping rápido intradiario."
-                                
-                                self.estado["posiciones_abiertas"][ticker] = {
-                                    "precio_entrada": round(precio_actual, 4),
-                                    "stop_loss": round(stop_loss_inicial, 4),
-                                    "max_precio_visto": round(precio_actual, 4),
-                                    "ultimo_rendimiento_notificado": 0.0
-                                }
-                                
-                                msg = (
-                                    f"📡 *NUEVA ALERTA RADAR DE VOLUMEN (15M)* 📡\n"
-                                    f"───────────────────────\n"
-                                    f"🚨 *RANGO DE ACCIÓN:* `{categoria}`\n"
-                                    f"🎯 *Activo:* `{ticker}`\n"
-                                    f"💰 *Precio Entrada:* `${precio_actual:.2f}`\n"
-                                    f"📊 *Fuerza Volumen:* `{ratio_volumen:.1f}x` MAV20\n"
-                                    f"🛡️ *Stop Loss Inicial:* `${stop_loss_inicial:.2f}`\n"
-                                    f"───────────────────────\n"
-                                    f"💡 _Nota: {detalles_cat}_"
-                                )
-                                self.enviar_telegram(msg)
-                                self.guardar_estado()
-                except: pass
-            time.sleep(0.5)
+        with ThreadPoolExecutor(max_workers=len(bloques)) as executor:
+            executor.map(self.procesar_un_bloque, bloques)
 
     def gestionar_trailing_stops(self):
         if not self.estado["posiciones_abiertas"]: return
@@ -165,13 +183,13 @@ class PipelineTradingAlphaTelegram:
         tickers_string = " ".join(tickers_abiertos)
         
         try:
-            datos_mercado = yf.download(tickers_string, period="3d", interval="15m", group_by="ticker", progress=False, timeout=12)
+            datos_mercado = yf.download(tickers_string, period="2d", interval="15m", group_by="ticker", progress=False, timeout=10)
         except: return
 
         for ticker in tickers_abiertos:
             try:
                 df = datos_mercado[ticker].dropna() if len(tickers_abiertos) > 1 else datos_mercado.dropna()
-                if len(df) < 15: continue
+                if len(df) < 12: continue
                 
                 hoy = df.iloc[-1]
                 precio_actual = hoy['Close']
@@ -212,30 +230,33 @@ class PipelineTradingAlphaTelegram:
             except: pass
 
 def es_horario_mercado():
-    # Validamos usando la hora local de España (Madrid)
     zona_local = pytz.timezone('Europe/Madrid')
     ahora = datetime.now(zona_local)
-    
-    # Lunes=0, Domingo=6. Solo operar de Lunes (0) a Viernes (4)
-    if ahora.weekday() > 4:
-        return False
-        
-    # Verificar ventana de 16:00 a 22:00 h
-    if 16 <= ahora.hour < 22:
-        return True
-        
+    if ahora.weekday() > 4: return False  # Fines de semana descartados
+    if 16 <= ahora.hour < 22: return True  # Ventana activa: 16:00 a 22:00
     return False
 
+def motor_cron_interno(bot):
+    bot.enviar_telegram("🤖 *RADAR INTELIGENTE CONTROLADO OPERATIVO* 🤖\n_Monitoreando el mercado cada 15 min de Lunes a Viernes (16h a 22h)..._")
+    
+    while True:
+        try:
+            if es_horario_mercado():
+                # Ejecutar barrido de mercado
+                bot.gestionar_trailing_stops()
+                watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
+                bot.escanear_intradiario_concurrente(watchlist_de_hoy)
+        except Exception:
+            pass
+        
+        # Pausa estructural de 15 minutos (900 segundos) antes del siguiente ciclo
+        time.sleep(900)
+
 if __name__ == '__main__':
-    # Filtro estricto: Si el cron salta fuera de hora o en fin de semana, el script se apaga en milisegundos sin consumir nada
-    if es_horario_mercado():
-        bot = PipelineTradingAlphaTelegram()
-        
-        # 1. Gestionar stops de posiciones abiertas en el barrido actual
-        bot.gestionar_trailing_stops()
-        
-        # 2. Rastrear anomalías del bloque aleatorio
-        watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=140)
-        bot.escanear_intradiario(watchlist_de_hoy)
-        
-        # Al terminar las tareas, el script finaliza limpiamente liberando el proceso para el cron
+    # 1. Enciende el puerto web de forma instantánea. Render aprueba el deploy en 1 segundo.
+    threading.Thread(target=iniciar_servidor_web, daemon=True).start()
+    time.sleep(0.5)
+    
+    # 2. Arranca el motor infinito con la lógica de horarios encapsulada
+    instancia_bot = PipelineTradingAlphaTelegram()
+    motor_cron_interno(instancia_bot)
