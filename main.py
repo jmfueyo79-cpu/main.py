@@ -7,27 +7,12 @@ import random
 import pandas as pd
 import yfinance as yf
 import time
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from datetime import datetime
+import pytz
 
 # SILENCIAR ADVERTENCIAS EN LOS LOGS PARA OPTIMIZAR VELOCIDAD
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
-
-# --- SERVIDOR WEB AUXILIAR ULTRA RÁPIDO (Asegura el éxito inmediato del deploy) ---
-class WebServerHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, format, *args): return
-
-def iniciar_servidor_web():
-    puerto = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
-    server.serve_forever()
-# --------------------------------------------------------------------------------------
 
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250", archivo_estado="estado_alpha_trading.json"):
@@ -86,7 +71,6 @@ class PipelineTradingAlphaTelegram:
         except: pass
 
     def generar_watchlist_exploratoria(self, tamano_total=140):
-        # Muestra aleatoria pura y equilibrada para optimizar la carga del procesador y la red
         return random.sample(self.banco_total_activos, min(tamano_total, len(self.banco_total_activos)))
 
     def enviar_telegram(self, mensaje):
@@ -227,19 +211,31 @@ class PipelineTradingAlphaTelegram:
                     self.guardar_estado()
             except: pass
 
+def es_horario_mercado():
+    # Validamos usando la hora local de España (Madrid)
+    zona_local = pytz.timezone('Europe/Madrid')
+    ahora = datetime.now(zona_local)
+    
+    # Lunes=0, Domingo=6. Solo operar de Lunes (0) a Viernes (4)
+    if ahora.weekday() > 4:
+        return False
+        
+    # Verificar ventana de 16:00 a 22:00 h
+    if 16 <= ahora.hour < 22:
+        return True
+        
+    return False
+
 if __name__ == '__main__':
-    # PRIORIDAD 1: Levantar el puerto web de inmediato. El Deploy se aprueba en menos de 1 segundo.
-    threading.Thread(target=iniciar_servidor_web, daemon=True).start()
-    time.sleep(0.5)
-    
-    # PRIORIDAD 2: Inicializar el Bot y procesar el mercado en segundo plano de manera estable
-    bot = PipelineTradingAlphaTelegram()
-    
-    # 1. Gestionar y actualizar inmediatamente los trailing stops de las posiciones que sigan abiertas
-    bot.gestionar_trailing_stops()
-    
-    # 2. Generar una muestra aleatoria fresca del banco masivo y ejecutar el escaneo de volumen
-    watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=140)
-    bot.escanear_intradiario(watchlist_de_hoy)
-    
-    time.sleep(2)
+    # Filtro estricto: Si el cron salta fuera de hora o en fin de semana, el script se apaga en milisegundos sin consumir nada
+    if es_horario_mercado():
+        bot = PipelineTradingAlphaTelegram()
+        
+        # 1. Gestionar stops de posiciones abiertas en el barrido actual
+        bot.gestionar_trailing_stops()
+        
+        # 2. Rastrear anomalías del bloque aleatorio
+        watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=140)
+        bot.escanear_intradiario(watchlist_de_hoy)
+        
+        # Al terminar las tareas, el script finaliza limpiamente liberando el proceso para el cron
