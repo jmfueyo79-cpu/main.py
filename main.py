@@ -8,6 +8,7 @@ import pandas as pd
 import yfinance as yf
 import time
 import threading
+import gc
 from datetime import datetime
 import pytz
 from concurrent.futures import ThreadPoolExecutor
@@ -20,7 +21,10 @@ logging.getLogger('requests').setLevel(logging.CRITICAL)
 # Instancia global del bot para que esté accesible desde el Servidor Web
 instancia_bot = None
 
-# --- SERVIDOR WEB AUXILIAR (Ahora actúa como el disparador real del análisis) ---
+# Candado global para evitar que se acumulen hilos si se solapan las peticiones de cron-job
+lock_escaneo = threading.Lock()
+
+# --- SERVIDOR WEB AUXILIAR (Actúa como el disparador real del análisis) ---
 class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # 1. Respondemos OK inmediatamente a cron-job.org para que dé ÉXITO (Verde) y no pese nada
@@ -29,8 +33,8 @@ class WebServerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK")
         
-        # 2. Disparamos el escaneo en un hilo separado para no retrasar la respuesta web
-        if instancia_bot is not None:
+        # 2. Si el candado está libre, lanza el escaneo. Si está ocupado, ignora el disparo para proteger la RAM
+        if instancia_bot is not None and not lock_escaneo.locked():
             threading.Thread(target=ejecutar_ciclo_radar, args=(instancia_bot,), daemon=True).start()
 
     def log_message(self, format, *args): return
@@ -183,7 +187,8 @@ class PipelineTradingAlphaTelegram:
     def escanear_intradiario_concurrente(self, watchlist):
         tamano_bloque = 20
         bloques = [watchlist[i:i + tamano_bloque] for i in range(0, len(watchlist), tamano_bloque)]
-        with ThreadPoolExecutor(max_workers=len(bloques)) as executor:
+        # Reducimos los trabajadores simultáneos a un máximo de 3 para proteger los 512MB de RAM de Render
+        with ThreadPoolExecutor(max_workers=min(3, len(bloques))) as executor:
             executor.map(self.procesar_un_bloque, bloques)
 
     def gestionar_trailing_stops(self):
@@ -242,25 +247,33 @@ def es_horario_mercado():
     zona_local = pytz.timezone('Europe/Madrid')
     ahora = datetime.now(zona_local)
     if ahora.weekday() > 4: return False  # Fines de semana cerrados
-    if 15 <= ahora.hour < 22: return True  # Ventana activa (incluye la preparación de las 15:00)
+    if 15 <= ahora.hour < 22: return True  # Ventana activa (15:00 a 22:00)
     return False
 
 def ejecutar_ciclo_radar(bot):
-    """Esta función realiza un único barrido limpio cada vez que la web recibe un ping"""
-    try:
-        if es_horario_mercado():
+    """Realiza un único barrido y fuerza la liberación total de la memoria RAM al finalizar"""
+    if not es_horario_mercado():
+        return
+        
+    with lock_escaneo:
+        try:
             bot.gestionar_trailing_stops()
             watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
             bot.escanear_intradiario_concurrente(watchlist_de_hoy)
-    except Exception:
-        pass
+        except Exception:
+            pass
+        finally:
+            # LIMPIEZA CRÍTICA DE RAM: Eliminamos variables del bloque y forzamos recolección de basura
+            if 'watchlist_de_hoy' in locals(): 
+                del watchlist_de_hoy
+            gc.collect()  # Borra los residuos ocultos generados por pandas e yfinance de la RAM
 
 if __name__ == '__main__':
-    # 1. Instanciamos el bot de forma global para que el servidor web lo use
+    # 1. Instanciamos el bot de forma global para enlazarlo con las peticiones web
     instancia_bot = PipelineTradingAlphaTelegram()
     
-    # Enviar mensaje de confirmación inicial a Telegram al desplegar
-    instancia_bot.enviar_telegram("🤖 *RADAR INTELIGENTE CONFIGURADO POR HILOS WEB* 🤖\n_Listo para recibir pings externos de cron-job.org..._")
+    # Mensaje inicial único de confirmación
+    instancia_bot.enviar_telegram("🤖 *RADAR ESTABILIZADO Y ANTIFUGAS ACTIVO* 🤖\n_Monitoreo optimizado de memoria listo para la sesión._")
     
-    # 2. Encendemos el servidor web en el hilo principal (Mantiene Render vivo eternamente)
+    # 2. Encendemos el servidor web en el hilo principal (Mantiene Render despierto eternamente)
     iniciar_servidor_web()
