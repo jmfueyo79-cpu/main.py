@@ -17,13 +17,22 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
 
-# --- SERVIDOR WEB AUXILIAR (Obligatorio para que Render no cancele el Deploy) ---
+# Instancia global del bot para que esté accesible desde el Servidor Web
+instancia_bot = None
+
+# --- SERVIDOR WEB AUXILIAR (Ahora actúa como el disparador real del análisis) ---
 class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        # 1. Respondemos OK inmediatamente a cron-job.org para que dé ÉXITO (Verde) y no pese nada
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(b"OK")
+        
+        # 2. Disparamos el escaneo en un hilo separado para no retrasar la respuesta web
+        if instancia_bot is not None:
+            threading.Thread(target=ejecutar_ciclo_radar, args=(instancia_bot,), daemon=True).start()
+
     def log_message(self, format, *args): return
 
 def iniciar_servidor_web():
@@ -232,31 +241,26 @@ class PipelineTradingAlphaTelegram:
 def es_horario_mercado():
     zona_local = pytz.timezone('Europe/Madrid')
     ahora = datetime.now(zona_local)
-    if ahora.weekday() > 4: return False  # Fines de semana descartados
-    if 16 <= ahora.hour < 22: return True  # Ventana activa: 16:00 a 22:00
+    if ahora.weekday() > 4: return False  # Fines de semana cerrados
+    if 15 <= ahora.hour < 22: return True  # Ventana activa (incluye la preparación de las 15:00)
     return False
 
-def motor_cron_interno(bot):
-    bot.enviar_telegram("🤖 *RADAR INTELIGENTE CONTROLADO OPERATIVO* 🤖\n_Monitoreando el mercado cada 15 min de Lunes a Viernes (16h a 22h)..._")
-    
-    while True:
-        try:
-            if es_horario_mercado():
-                # Ejecutar barrido de mercado
-                bot.gestionar_trailing_stops()
-                watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
-                bot.escanear_intradiario_concurrente(watchlist_de_hoy)
-        except Exception:
-            pass
-        
-        # Pausa estructural de 15 minutos (900 segundos) antes del siguiente ciclo
-        time.sleep(900)
+def ejecutar_ciclo_radar(bot):
+    """Esta función realiza un único barrido limpio cada vez que la web recibe un ping"""
+    try:
+        if es_horario_mercado():
+            bot.gestionar_trailing_stops()
+            watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
+            bot.escanear_intradiario_concurrente(watchlist_de_hoy)
+    except Exception:
+        pass
 
 if __name__ == '__main__':
-    # 1. Enciende el puerto web de forma instantánea. Render aprueba el deploy en 1 segundo.
-    threading.Thread(target=iniciar_servidor_web, daemon=True).start()
-    time.sleep(0.5)
-    
-    # 2. Arranca el motor infinito con la lógica de horarios encapsulada
+    # 1. Instanciamos el bot de forma global para que el servidor web lo use
     instancia_bot = PipelineTradingAlphaTelegram()
-    motor_cron_interno(instancia_bot)
+    
+    # Enviar mensaje de confirmación inicial a Telegram al desplegar
+    instancia_bot.enviar_telegram("🤖 *RADAR INTELIGENTE CONFIGURADO POR HILOS WEB* 🤖\n_Listo para recibir pings externos de cron-job.org..._")
+    
+    # 2. Encendemos el servidor web en el hilo principal (Mantiene Render vivo eternamente)
+    iniciar_servidor_web()
