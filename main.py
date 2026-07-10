@@ -277,3 +277,36 @@ if __name__ == '__main__':
     
     # 2. Encendemos el servidor web en el hilo principal (Mantiene Render despierto eternamente)
     iniciar_servidor_web()
+# --- BLOQUE DE LIMPIEZA Y OPTIMIZACIÓN (Copiar y pegar al final del main.py) ---
+
+def ejecutar_ciclo_radar(bot):
+    """
+    Versión optimizada que mantiene tus alertas pero fuerza la liberación de RAM.
+    """
+    if not es_horario_mercado():
+        return
+        
+    with lock_escaneo:
+        try:
+            # Ejecuta tus criterios originales
+            bot.gestionar_trailing_stops()
+            watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
+            bot.escanear_intradiario_concurrente(watchlist_de_hoy)
+        except Exception:
+            pass
+        finally:
+            # --- LIMPIEZA AUTOMÁTICA ---
+            # Borramos la lista de tickers para liberar espacio tras el ciclo
+            if 'watchlist_de_hoy' in locals(): 
+                del watchlist_de_hoy
+            
+            # Limpieza profunda de los residuos que dejan los DataFrames de Pandas
+            gc.collect() 
+
+# NOTA: Asegúrate de que, dentro de tu función original 
+# 'escanear_intradiario_concurrente', cada vez que proceses un ticker,
+# al finalizar el bucle pongas 'del df' o 'del df_ticker' 
+# para que la memoria se libere ticker a ticker.
+
+# Si tu main.py tenía un 'if __name__ == "__main__":' al final, 
+# asegúrate de que no se duplique al pegar esto.
