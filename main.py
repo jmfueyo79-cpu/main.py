@@ -14,26 +14,26 @@ import pytz
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# SILENCIAR ADVERTENCIAS EN LOS LOGS PARA OPTIMIZAR VELOCIDAD
+# SILENCIAR ADVERTENCIAS EN LOS LOGS PARA CONTROLAR EL CONSUMO
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 logging.getLogger('requests').setLevel(logging.CRITICAL)
 
 # Instancia global del bot para que esté accesible desde el Servidor Web
 instancia_bot = None
 
-# Candado global para evitar que se acumulen hilos si se solapan las peticiones de cron-job
+# Candado global para evitar ejecuciones simultáneas que saturen la RAM
 lock_escaneo = threading.Lock()
 
 # --- SERVIDOR WEB AUXILIAR (Actúa como el disparador real del análisis) ---
 class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # 1. Respondemos OK inmediatamente a cron-job.org para que dé ÉXITO (Verde) y no pese nada
+        # Respondemos OK inmediatamente a cron-job.org para que no se quede colgado esperando
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(b"OK")
         
-        # 2. Si el candado está libre, lanza el escaneo. Si está ocupado, ignora el disparo para proteger la RAM
+        # Si el candado está libre, lanzamos el escaneo en segundo plano liberando recursos rápidamente
         if instancia_bot is not None and not lock_escaneo.locked():
             threading.Thread(target=ejecutar_ciclo_radar, args=(instancia_bot,), daemon=True).start()
 
@@ -51,42 +51,10 @@ class PipelineTradingAlphaTelegram:
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
         
-        # BANCO MASIVO EXTENDIDO DE TRADING
-        self.banco_total_activos = [
-            # --- SECTOR CRIPTO, MINERÍA & BLOCKCHAIN ---
-            "MARA", "RIOT", "CLSK", "WULF", "CIFR", "CORZ", "HUT", "BTBT", "SDIG", "COWG", 
-            "MIGI", "CAN", "BOF", "BTCM", "GREE", "SOS", "BITF", "DGHI", "BITQ", "WGMI", 
-            "BLOK", "MSTR", "CONL", "COIN", "IREN",
-            # --- SECTOR IA, SEMICONDUCTORES, ROBÓTICA & TECH ---
-            "SOFI", "HOOD", "AFRM", "UPST", "AI", "BBAI", "SOUN", "PATH", "C3AI", "PLUG", 
-            "UNITY", "RBLX", "ENVX", "FREY", "EVGO", "BE", "STEM", "SUNW", "MAXN", "CSIQ", 
-            "XPEV", "NIO", "LI", "FUTU", "TIGR", "WKHS", "GOEV", "HYLN", "REE", "ZEV", 
-            "DM", "PRST", "AEYE", "BMR", "CXAI", "MKFG", "IKT", "LUNR", "SIDU", "VLD",
-            "QUBT", "RGTI", "IONQ", "QMCO", "KOPN", "WAVS", "POET", "BOUG", "ASTR", "PLTR",
-            # --- SECTOR BIOTECH & MICRO-PHARMA EXPLOSIVAS ---
-            "NVAX", "CELH", "GFAI", "ANVS", "AMAM", "KPTI", "PTGX", "CYTK", "RIGL", "CTXR", 
-            "AVXL", "BCRX", "GERN", "CRSP", "NTLA", "BEAM", "EDIT", "VERV", "BLUE", "SGMO", 
-            "SRPT", "PTCT", "ALNY", "IONIS", "EXAS", "GH", "GUARD", "AADI", "ABVC", "ACAD", 
-            "ACER", "ACET", "ACHV", "ACIU", "ACRS", "ACST", "ACTG", "ALEC", "ALIM", "ALKS", 
-            "ALLR", "ALNA", "ALXO", "AMED", "AMTI", "ANGI", "ANKR", "APLS", "APLT", "APRE", 
-            "APTO", "APYX", "AQST", "ARDX", "ARQT", "ARWR", "ASMB", "ASND", "ATNX", "ATOM", 
-            "ATOS", "ATRA", "ATRC", "AURA", "AUPH", "AUR", "AVDL", "AVIR", "AVTE", "AXSM", 
-            "AXLA", "AZTA", "BCAB", "BCDA", "BMEA", "BNGO", "BPMC", "BTAI", "CARS", "CARA", 
-            "CATX", "CCXI", "CDMO", "CDNA", "CDTX", "CDXC", "CELC", "CERE", "CGEN", "CGON", 
-            "CHRS", "CHYI", "CLDX", "CLSD", "CLVS", "CMPS", "CMRX", "CNCE", "CNTA", "CNTG", 
-            "COGT", "COLL", "CORT", "CRNX", "CRBU", "CRMD", "CRTX", "VNDA", "TLSA", "PRTA",
-            "INSM", "BBIO", "SRRK", "KNSA", "RLAY", "RYTM", "PLI", "XENE", "ZEAL", "MRUS",
-            "MURA", "IMCR", "KROS", "RCKT", "ABOS", "VTYX", "ASND", "MOR", "IDYA", "CGEM",
-            "CRDF", "IOVA", "ALT", "HUMA",
-            # --- EXTRA SMALL CAPS DE MOMENTUM, ENERGY & REVERSAL ---
-            "BABA", "DKNG", "JD", "PDD", "TLRY", "FCEL", "BLNK", "RUN", "CHPT", "NKLA", 
-            "QS", "BILI", "TAL", "EDU", "GOTU", "UXIN", "YALA", "IQ", "HUYA",
-            "DADA", "FINV", "LX", "UPLI", "GATO", "MAG", "ASM", "GPL", "NAK",
-            "AAU", "PLG", "THM", "WRN", "TRX", "GSV", "CDXS", "VERI", "XAIR",
-            "PALI", "BTTX", "TCBP", "ISPR", "SNGX", "OCUP", "TENX", "PRSO", "SOPA", "LIPO",
-            "OPTT", "WATT", "CEI", "HUSA", "IMPP", "REI", "PED", "MREO", "SNDL", "ACB"
-        ]
+        # Tus activos favoritos que SIEMPRE se analizan obligatoriamente en cada ciclo
+        self.activos_prioritarios = ["FFAI", "ALLO", "CRDF", "ALT", "IOVA", "CHRS", "AVXL", "TNXP"]
         
+        # Estado inicial del bot
         self.estado = self.cargar_estado()
 
     def cargar_estado(self):
@@ -101,8 +69,31 @@ class PipelineTradingAlphaTelegram:
             with open(self.archivo_estado, 'w') as f: json.dump(self.estado, f, indent=4)
         except: pass
 
-    def generar_watchlist_exploratoria(self, tamano_total=100):
-        return random.sample(self.banco_total_activos, min(tamano_total, len(self.banco_total_activos)))
+    def obtener_top_ganadoras_del_mercado(self):
+        """
+        Descarga en tiempo real las acciones con más movimiento alcista del mercado US
+        usando un endpoint público ligero de Yahoo Finance (no consume apenas RAM).
+        """
+        top_tickers = []
+        try:
+            # Petición JSON directa para obtener las "Most Active" / "Gainers" de Yahoo Finance
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&scrIds=day_gainers&count=40"
+            r = requests.get(url, headers=headers, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                results = data.get("finance", {}).get("result", [])[0].get("quotes", [])
+                for quote in results:
+                    symbol = quote.get("symbol")
+                    # Filtramos de inmediato para evitar procesar ETFs, índices o tickers raros
+                    if symbol and "^" not in symbol and "=" not in symbol and len(symbol) <= 5:
+                        top_tickers.append(symbol)
+        except Exception as e:
+            print(f"Error cargando top ganadoras: {e}")
+            
+        # Unimos tus activos favoritos al radar dinámico de ganadoras del día
+        watchlist_completa = list(set(self.activos_prioritarios + top_tickers))
+        return watchlist_completa
 
     def enviar_telegram(self, mensaje):
         url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
@@ -120,7 +111,8 @@ class PipelineTradingAlphaTelegram:
     def procesar_un_bloque(self, bloque):
         tickers_string = " ".join(bloque)
         try:
-            datos_mercado = yf.download(tickers_string, period="2d", interval="15m", group_by="ticker", progress=False, timeout=10)
+            # IMPORTANTE: Desactivamos threads=False para prevenir pérdidas de memoria en Render
+            datos_mercado = yf.download(tickers_string, period="2d", interval="15m", group_by="ticker", progress=False, timeout=10, threads=False)
         except: return
 
         for ticker in bloque:
@@ -136,7 +128,8 @@ class PipelineTradingAlphaTelegram:
                 hoy = df.iloc[-1]
                 precio_actual = hoy['Close']
                 
-                if precio_actual < 2.0 or precio_actual > 22.0: continue
+                # Excluir activos que no se encuentren en el rango óptimo de inversión ($0.10 a $25.00)
+                if precio_actual < 0.10 or precio_actual > 25.0: continue
                 
                 df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
                 df['ATR_14'] = self.calcular_atr(df, 14)
@@ -145,13 +138,19 @@ class PipelineTradingAlphaTelegram:
                     
                 ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
                 
+                # Gatillo de entrada de volumen (Mínimo 2.2 veces la media móvil)
                 if ratio_volumen > 2.2:
                     cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
-                    if cuerpo_vela < (hoy['ATR_14'] * 1.2) and (hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.6):
+                    atr_actual = hoy['ATR_14']
+                    
+                    es_breakout_alcista = (hoy['Close'] > hoy['Open']) and (cuerpo_vela > (atr_actual * 0.8))
+                    es_martillo_reversion = (cuerpo_vela < (atr_actual * 1.5)) and ((hoy['Close'] - hoy['Low']) > (cuerpo_vela * 0.5))
+                    
+                    if es_breakout_alcista or es_martillo_reversion:
                         if ticker not in self.estado["posiciones_abiertas"]:
-                            atr_actual = hoy['ATR_14']
                             stop_loss_inicial = precio_actual - (2.5 * atr_actual)
                             
+                            # Clasificación de fuerza según volumen detectado
                             if ratio_volumen >= 4.0:
                                 categoria = "🟥 SÚPER COHETE (>50% Potencial)"
                                 detalles_cat = "Anomalía crítica de Volumen Institucional (Ballenas acumulando agresivo)."
@@ -166,7 +165,8 @@ class PipelineTradingAlphaTelegram:
                                 "precio_entrada": round(precio_actual, 4),
                                 "stop_loss": round(stop_loss_inicial, 4),
                                 "max_precio_visto": round(precio_actual, 4),
-                                "ultimo_rendimiento_notificado": 0.0
+                                "ultimo_rendimiento_notificado": 0.0,
+                                "salida_parcial_ejecutada": False
                             }
                             
                             msg = (
@@ -174,9 +174,9 @@ class PipelineTradingAlphaTelegram:
                                 f"───────────────────────\n"
                                 f"🚨 *RANGO DE ACCIÓN:* `{categoria}`\n"
                                 f"🎯 *Activo:* `{ticker}`\n"
-                                f"💰 *Precio Entrada:* `${precio_actual:.2f}`\n"
+                                f"💰 *Precio Entrada:* `${precio_actual:.4f}`\n"
                                 f"📊 *Fuerza Volumen:* `{ratio_volumen:.1f}x` MAV20\n"
-                                f"🛡️ *Stop Loss Inicial:* `${stop_loss_inicial:.2f}`\n"
+                                f"🛡️ *Stop Loss Inicial:* `${stop_loss_inicial:.4f}`\n"
                                 f"───────────────────────\n"
                                 f"💡 _Nota: {detalles_cat}_"
                             )
@@ -185,10 +185,11 @@ class PipelineTradingAlphaTelegram:
             except: pass
 
     def escanear_intradiario_concurrente(self, watchlist):
-        tamano_bloque = 20
+        # Agrupamos en bloques de 15 activos para evitar cuellos de botella en memoria
+        tamano_bloque = 15
         bloques = [watchlist[i:i + tamano_bloque] for i in range(0, len(watchlist), tamano_bloque)]
-        # Reducimos los trabajadores simultáneos a un máximo de 3 para proteger los 512MB de RAM de Render
-        with ThreadPoolExecutor(max_workers=min(3, len(bloques))) as executor:
+        # Reducimos los workers máximos a 2 para mantener la CPU y la RAM estables
+        with ThreadPoolExecutor(max_workers=2) as executor:
             executor.map(self.procesar_un_bloque, bloques)
 
     def gestionar_trailing_stops(self):
@@ -197,7 +198,7 @@ class PipelineTradingAlphaTelegram:
         tickers_string = " ".join(tickers_abiertos)
         
         try:
-            datos_mercado = yf.download(tickers_string, period="2d", interval="15m", group_by="ticker", progress=False, timeout=10)
+            datos_mercado = yf.download(tickers_string, period="2d", interval="15m", group_by="ticker", progress=False, timeout=10, threads=False)
         except: return
 
         for ticker in tickers_abiertos:
@@ -212,31 +213,70 @@ class PipelineTradingAlphaTelegram:
                 pos = self.estado["posiciones_abiertas"][ticker]
                 rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                 
+                # 1. OBJETIVO EXTREMO ALCANZADO (Take Profit Duro al +50%)
+                if rendimiento_acumulado >= 50.0:
+                    msg = (
+                        f"🏆 *¡SÚPER COHETE COMPLETADO (+50%)!* 🏆\n\n"
+                        f"🚀 *Activo:* `{ticker}`\n"
+                        f"🎯 *Precio de Cierre:* `${precio_actual:.4f}`\n"
+                        f"💰 *Rendimiento Final:* `+{rendimiento_acumulado:.2f}%`\n"
+                        f"🔥 _¡Camión cargado con éxito! Posición cerrada en el objetivo._"
+                    )
+                    self.enviar_telegram(msg)
+                    del self.estado["posiciones_abiertas"][ticker]
+                    self.guardar_estado()
+                    continue
+
+                # 2. SALIDA PARCIAL AL +15% (REGLA FREE RIDER)
+                if rendimiento_acumulado >= 15.0 and not pos.get("salida_parcial_ejecutada", False):
+                    pos["salida_parcial_ejecutada"] = True
+                    pos["stop_loss"] = pos["precio_entrada"]  # Subimos SL a breakeven
+                    pos["ultimo_rendimiento_notificado"] = 15.0
+                    
+                    msg = (
+                        f"💰 *SALIDA PARCIAL EJECUTADA (+15%)* 💰\n\n"
+                        f"💎 *Activo:* `{ticker}`\n"
+                        f"💵 *Precio Actual:* `${precio_actual:.4f}`\n"
+                        f"🛡️ *Acción:* `Se vende el 50% de la posición.`\n"
+                        f"🔒 *Seguridad:* `Stop Loss de la otra mitad ajustado a precio de entrada (${pos['precio_entrada']:.4f}). ¡Operación libre de riesgo!`"
+                    )
+                    self.enviar_telegram(msg)
+                    self.guardar_estado()
+
+                # 3. TRAILING STOP HOLGADO DINÁMICO
                 if precio_actual > pos["max_precio_visto"]:
                     pos["max_precio_visto"] = round(precio_actual, 4)
-                    nuevo_stop = precio_actual - (2.2 * atr_actual)
+                    
+                    # Si ya cobramos el 15%, le damos mucha holgura (3.5 ATR) para esquivar correcciones y buscar el 50%
+                    multiplicador_stop = 3.5 if pos.get("salida_parcial_ejecutada", False) else 2.2
+                    nuevo_stop = precio_actual - (multiplicador_stop * atr_actual)
+                    
                     if nuevo_stop > pos["stop_loss"]:
                         pos["stop_loss"] = round(nuevo_stop, 4)
                 
-                if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 5.0:
+                # Alertas de avance intermedio cada 10% de subida adicional
+                if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 10.0:
                     pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
                     msg = (
                         f"⚡ *SUBIDA CONTROLADA* ⚡\n\n"
                         f"💎 *Activo:* `{ticker}`\n"
-                        f"💵 *Precio:* `${precio_actual:.2f}`\n"
+                        f"💵 *Precio:* `${precio_actual:.4f}`\n"
                         f"🔥 *Beneficio actual:* `+{rendimiento_acumulado:.2f}%`\n"
-                        f"🛡️ *Ajuste de Stop:* `${pos['stop_loss']:.2f}`"
+                        f"🛡️ *Ajuste de Stop:* `${pos['stop_loss']:.4f}`"
                     )
                     self.enviar_telegram(msg)
                     self.guardar_estado()
                     
+                # 4. SALIDA POR TACTO DE STOP
                 if precio_actual <= pos["stop_loss"]:
                     rendimiento_final = ((pos["stop_loss"] - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
+                    tipo_salida = "TRAILING STOP (FREE RIDER)" if pos.get("salida_parcial_ejecutada", False) else "STOP LOSS"
+                    
                     msg = (
-                        f"🚨 *DISPARO DE TRAILING STOP* 🚨\n\n"
+                        f"🚨 *DISPARO DE {tipo_salida}* 🚨\n\n"
                         f"📉 *Activo:* `{ticker}`\n"
-                        f"🚪 *Precio Salida:* `${pos['stop_loss']:.2f}`\n"
-                        f"💰 *Resultado Neto:* `+{rendimiento_final:.2f}%`"
+                        f"🚪 *Precio Salida:* `${pos['stop_loss']:.4f}`\n"
+                        f"💰 *Resultado Neto:* `{rendimiento_final:+.2f}%`"
                     )
                     self.enviar_telegram(msg)
                     del self.estado["posiciones_abiertas"][ticker]
@@ -246,67 +286,45 @@ class PipelineTradingAlphaTelegram:
 def es_horario_mercado():
     zona_local = pytz.timezone('Europe/Madrid')
     ahora = datetime.now(zona_local)
-    if ahora.weekday() > 4: return False  # Fines de semana cerrados
-    if 15 <= ahora.hour < 22: return True  # Ventana activa (15:00 a 22:00)
+    if ahora.weekday() > 4: return False  # Fines de semana cerrado
+    if 15 <= ahora.hour < 22: return True  # Horario del mercado activo (15:00 a 22:00)
     return False
 
 def ejecutar_ciclo_radar(bot):
-    """Realiza un único barrido y fuerza la liberación total de la memoria RAM al finalizar"""
+    """
+    Realiza un único barrido de las acciones más calientes del mercado 
+    y libera activamente la RAM al finalizar para evitar la saturación en Render.
+    """
     if not es_horario_mercado():
         return
         
     with lock_escaneo:
         try:
+            # 1. Gestionar las salidas de las posiciones activas
             bot.gestionar_trailing_stops()
-            watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
-            bot.escanear_intradiario_concurrente(watchlist_de_hoy)
-        except Exception:
-            pass
-        finally:
-            # LIMPIEZA CRÍTICA DE RAM: Eliminamos variables del bloque y forzamos recolección de basura
-            if 'watchlist_de_hoy' in locals(): 
-                del watchlist_de_hoy
-            gc.collect()  # Borra los residuos ocultos generados por pandas e yfinance de la RAM
+            
+            # 2. Obtener automáticamente las Top Ganadoras + tus prioritarios
+            watchlist_dinamica = bot.obtener_top_ganadoras_del_mercado()
+            
+            # 3. Escanear el bloque de activos
+            if watchlist_dinamica:
+                bot.escanear_intradiario_concurrente(watchlist_dinamica)
+                
+        [span_3](start_span)finally:
+            # --- LIMPIEZA EXTREMA DE MEMORIA (GC) ---
+            # Borramos referencias de datos pesados temporales
+            if 'watchlist_dinamica' in locals(): del watchlist_dinamica
+            # Forzamos al colector de basura de Python a liberar la RAM de inmediato[span_3](end_span)
+            gc.collect()
 
-if __name__ == '__main__':
-    # 1. Instanciamos el bot de forma global para enlazarlo con las peticiones web
+# --- INICIALIZACIÓN DEL SERVIDOR Y DEL RADAR ---
+if __name__ == "__main__":
     instancia_bot = PipelineTradingAlphaTelegram()
     
-    # Mensaje inicial único de confirmación
-    instancia_bot.enviar_telegram("🤖 *RADAR ESTABILIZADO Y ANTIFUGAS ACTIVO* 🤖\n_Monitoreo optimizado de memoria listo para la sesión._")
+    # Lanzamos el servidor web auxiliar en un hilo secundario
+    hilo_servidor = threading.Thread(target=iniciar_servidor_web, daemon=True)
+    hilo_servidor.start()
     
-    # 2. Encendemos el servidor web en el hilo principal (Mantiene Render despierto eternamente)
-    iniciar_servidor_web()
-# --- BLOQUE DE LIMPIEZA Y OPTIMIZACIÓN (Copiar y pegar al final del main.py) ---
-
-def ejecutar_ciclo_radar(bot):
-    """
-    Versión optimizada que mantiene tus alertas pero fuerza la liberación de RAM.
-    """
-    if not es_horario_mercado():
-        return
-        
-    with lock_escaneo:
-        try:
-            # Ejecuta tus criterios originales
-            bot.gestionar_trailing_stops()
-            watchlist_de_hoy = bot.generar_watchlist_exploratoria(tamano_total=100)
-            bot.escanear_intradiario_concurrente(watchlist_de_hoy)
-        except Exception:
-            pass
-        finally:
-            # --- LIMPIEZA AUTOMÁTICA ---
-            # Borramos la lista de tickers para liberar espacio tras el ciclo
-            if 'watchlist_de_hoy' in locals(): 
-                del watchlist_de_hoy
-            
-            # Limpieza profunda de los residuos que dejan los DataFrames de Pandas
-            gc.collect() 
-
-# NOTA: Asegúrate de que, dentro de tu función original 
-# 'escanear_intradiario_concurrente', cada vez que proceses un ticker,
-# al finalizar el bucle pongas 'del df' o 'del df_ticker' 
-# para que la memoria se libere ticker a ticker.
-
-# Si tu main.py tenía un 'if __name__ == "__main__":' al final, 
-# asegúrate de que no se duplique al pegar esto.
+    # Bucle infinito para mantener el hilo principal despierto
+    while True:
+        time.sleep(1)
