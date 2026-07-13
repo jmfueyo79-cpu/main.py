@@ -56,6 +56,9 @@ class PipelineTradingAlphaTelegram:
         
         # Estado inicial del bot
         self.estado = self.cargar_estado()
+        
+        # Mensaje de confirmación de arranque con éxito en Telegram
+        self.enviar_telegram("🤖 *RADAR ESTABILIZADO Y ANTIFUGAS ACTIVO*\nMonitoreo optimizado de memoria listo para la sesión.")
 
     def cargar_estado(self):
         if os.path.exists(self.archivo_estado):
@@ -76,7 +79,6 @@ class PipelineTradingAlphaTelegram:
         """
         top_tickers = []
         try:
-            # Petición JSON directa para obtener las "Most Active" / "Gainers" de Yahoo Finance
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
             url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&scrIds=day_gainers&count=40"
             r = requests.get(url, headers=headers, timeout=8)
@@ -85,13 +87,11 @@ class PipelineTradingAlphaTelegram:
                 results = data.get("finance", {}).get("result", [])[0].get("quotes", [])
                 for quote in results:
                     symbol = quote.get("symbol")
-                    # Filtramos de inmediato para evitar procesar ETFs, índices o tickers raros
                     if symbol and "^" not in symbol and "=" not in symbol and len(symbol) <= 5:
                         top_tickers.append(symbol)
         except Exception as e:
             print(f"Error cargando top ganadoras: {e}")
             
-        # Unimos tus activos favoritos al radar dinámico de ganadoras del día
         watchlist_completa = list(set(self.activos_prioritarios + top_tickers))
         return watchlist_completa
 
@@ -111,7 +111,7 @@ class PipelineTradingAlphaTelegram:
     def procesar_un_bloque(self, bloque):
         tickers_string = " ".join(bloque)
         try:
-            # IMPORTANTE: Desactivamos threads=False para prevenir pérdidas de memoria en Render
+            # Desactivamos threads para asegurar que Render no acumule basura en la RAM
             datos_mercado = yf.download(tickers_string, period="2d", interval="15m", group_by="ticker", progress=False, timeout=10, threads=False)
         except: return
 
@@ -128,7 +128,6 @@ class PipelineTradingAlphaTelegram:
                 hoy = df.iloc[-1]
                 precio_actual = hoy['Close']
                 
-                # Excluir activos que no se encuentren en el rango óptimo de inversión ($0.10 a $25.00)
                 if precio_actual < 0.10 or precio_actual > 25.0: continue
                 
                 df['Vol_Media_20'] = df['Volume'].rolling(window=20).mean()
@@ -138,7 +137,6 @@ class PipelineTradingAlphaTelegram:
                     
                 ratio_volumen = hoy['Volume'] / df['Vol_Media_20'].iloc[-1]
                 
-                # Gatillo de entrada de volumen (Mínimo 2.2 veces la media móvil)
                 if ratio_volumen > 2.2:
                     cuerpo_vela = abs(hoy['Close'] - hoy['Open'])
                     atr_actual = hoy['ATR_14']
@@ -150,7 +148,6 @@ class PipelineTradingAlphaTelegram:
                         if ticker not in self.estado["posiciones_abiertas"]:
                             stop_loss_inicial = precio_actual - (2.5 * atr_actual)
                             
-                            # Clasificación de fuerza según volumen detectado
                             if ratio_volumen >= 4.0:
                                 categoria = "🟥 SÚPER COHETE (>50% Potencial)"
                                 detalles_cat = "Anomalía crítica de Volumen Institucional (Ballenas acumulando agresivo)."
@@ -185,10 +182,8 @@ class PipelineTradingAlphaTelegram:
             except: pass
 
     def escanear_intradiario_concurrente(self, watchlist):
-        # Agrupamos en bloques de 15 activos para evitar cuellos de botella en memoria
         tamano_bloque = 15
         bloques = [watchlist[i:i + tamano_bloque] for i in range(0, len(watchlist), tamano_bloque)]
-        # Reducimos los workers máximos a 2 para mantener la CPU y la RAM estables
         with ThreadPoolExecutor(max_workers=2) as executor:
             executor.map(self.procesar_un_bloque, bloques)
 
@@ -213,7 +208,7 @@ class PipelineTradingAlphaTelegram:
                 pos = self.estado["posiciones_abiertas"][ticker]
                 rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                 
-                # 1. OBJETIVO EXTREMO ALCANZADO (Take Profit Duro al +50%)
+                # 1. OBJETIVO EXTREMO ALCANZADO (+50%)
                 if rendimiento_acumulado >= 50.0:
                     msg = (
                         f"🏆 *¡SÚPER COHETE COMPLETADO (+50%)!* 🏆\n\n"
@@ -230,7 +225,7 @@ class PipelineTradingAlphaTelegram:
                 # 2. SALIDA PARCIAL AL +15% (REGLA FREE RIDER)
                 if rendimiento_acumulado >= 15.0 and not pos.get("salida_parcial_ejecutada", False):
                     pos["salida_parcial_ejecutada"] = True
-                    pos["stop_loss"] = pos["precio_entrada"]  # Subimos SL a breakeven
+                    pos["stop_loss"] = pos["precio_entrada"]
                     pos["ultimo_rendimiento_notificado"] = 15.0
                     
                     msg = (
@@ -247,14 +242,12 @@ class PipelineTradingAlphaTelegram:
                 if precio_actual > pos["max_precio_visto"]:
                     pos["max_precio_visto"] = round(precio_actual, 4)
                     
-                    # Si ya cobramos el 15%, le damos mucha holgura (3.5 ATR) para esquivar correcciones y buscar el 50%
                     multiplicador_stop = 3.5 if pos.get("salida_parcial_ejecutada", False) else 2.2
                     nuevo_stop = precio_actual - (multiplicador_stop * atr_actual)
                     
                     if nuevo_stop > pos["stop_loss"]:
                         pos["stop_loss"] = round(nuevo_stop, 4)
                 
-                # Alertas de avance intermedio cada 10% de subida adicional
                 if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 10.0:
                     pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
                     msg = (
@@ -286,45 +279,31 @@ class PipelineTradingAlphaTelegram:
 def es_horario_mercado():
     zona_local = pytz.timezone('Europe/Madrid')
     ahora = datetime.now(zona_local)
-    if ahora.weekday() > 4: return False  # Fines de semana cerrado
-    if 15 <= ahora.hour < 22: return True  # Horario del mercado activo (15:00 a 22:00)
+    if ahora.weekday() > 4: return False
+    if 15 <= ahora.hour < 22: return True
     return False
 
 def ejecutar_ciclo_radar(bot):
-    """
-    Realiza un único barrido de las acciones más calientes del mercado 
-    y libera activamente la RAM al finalizar para evitar la saturación en Render.
-    """
     if not es_horario_mercado():
         return
         
     with lock_escaneo:
         try:
-            # 1. Gestionar las salidas de las posiciones activas
             bot.gestionar_trailing_stops()
-            
-            # 2. Obtener automáticamente las Top Ganadoras + tus prioritarios
             watchlist_dinamica = bot.obtener_top_ganadoras_del_mercado()
-            
-            # 3. Escanear el bloque de activos
             if watchlist_dinamica:
                 bot.escanear_intradiario_concurrente(watchlist_dinamica)
-                
-        [span_3](start_span)finally:
-            # --- LIMPIEZA EXTREMA DE MEMORIA (GC) ---
-            # Borramos referencias de datos pesados temporales
+        finally:
             if 'watchlist_dinamica' in locals(): del watchlist_dinamica
-            # Forzamos al colector de basura de Python a liberar la RAM de inmediato[span_3](end_span)
             gc.collect()
 
 # --- INICIALIZACIÓN DEL SERVIDOR Y DEL RADAR ---
 if __name__ == "__main__":
+    # Creamos la instancia y en el constructur se enviará el mensaje de inicio
     instancia_bot = PipelineTradingAlphaTelegram()
     
-    # Lanzamos el servidor web auxiliar en un hilo secundario
     hilo_servidor = threading.Thread(target=iniciar_servidor_web, daemon=True)
     hilo_servidor.start()
     
-    # Bucle infinito para mantener el hilo principal despierto
     while True:
         time.sleep(1)
