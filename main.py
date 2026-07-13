@@ -24,16 +24,14 @@ instancia_bot = None
 # Candado global para evitar ejecuciones simultáneas que saturen la RAM
 lock_escaneo = threading.Lock()
 
-# --- SERVIDOR WEB AUXILIAR (Actúa como el disparador real del análisis) ---
+# --- SERVIDOR WEB AUXILIAR ---
 class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        # Respondemos OK inmediatamente a cron-job.org para que no se quede colgado esperando
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(b"OK")
         
-        # Si el candado está libre, lanzamos el escaneo en segundo plano liberando recursos rápidamente
         if instancia_bot is not None and not lock_escaneo.locked():
             threading.Thread(target=ejecutar_ciclo_radar, args=(instancia_bot,), daemon=True).start()
 
@@ -51,14 +49,9 @@ class PipelineTradingAlphaTelegram:
         self.telegram_chat_id = telegram_chat_id
         self.archivo_estado = archivo_estado
         
-        # Tus activos favoritos que SIEMPRE se analizan obligatoriamente en cada ciclo
         self.activos_prioritarios = ["FFAI", "ALLO", "CRDF", "ALT", "IOVA", "CHRS", "AVXL", "TNXP"]
-        
-        # Estado inicial del bot
         self.estado = self.cargar_estado()
-        
-        # Mensaje de confirmación de arranque con éxito en Telegram
-        self.enviar_telegram("🤖 *RADAR ESTABILIZADO Y ANTIFUGAS ACTIVO*\nMonitoreo optimizado de memoria listo para la sesión.")
+        self.enviar_telegram("🤖 *RADAR SIN LÍMITE DE VELOCIDAD ACTIVO*\nAsegurando al +15% y dejando correr la otra mitad hasta el infinito. 🚀")
 
     def cargar_estado(self):
         if os.path.exists(self.archivo_estado):
@@ -73,10 +66,6 @@ class PipelineTradingAlphaTelegram:
         except: pass
 
     def obtener_top_ganadoras_del_mercado(self):
-        """
-        Descarga en tiempo real las acciones con más movimiento alcista del mercado US
-        usando un endpoint público ligero de Yahoo Finance (no consume apenas RAM).
-        """
         top_tickers = []
         try:
             headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
@@ -111,7 +100,6 @@ class PipelineTradingAlphaTelegram:
     def procesar_un_bloque(self, bloque):
         tickers_string = " ".join(bloque)
         try:
-            # Desactivamos threads para asegurar que Render no acumule basura en la RAM
             datos_mercado = yf.download(tickers_string, period="2d", interval="15m", group_by="ticker", progress=False, timeout=10, threads=False)
         except: return
 
@@ -207,22 +195,8 @@ class PipelineTradingAlphaTelegram:
                 
                 pos = self.estado["posiciones_abiertas"][ticker]
                 rendimiento_acumulado = ((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
-                
-                # 1. OBJETIVO EXTREMO ALCANZADO (+50%)
-                if rendimiento_acumulado >= 50.0:
-                    msg = (
-                        f"🏆 *¡SÚPER COHETE COMPLETADO (+50%)!* 🏆\n\n"
-                        f"🚀 *Activo:* `{ticker}`\n"
-                        f"🎯 *Precio de Cierre:* `${precio_actual:.4f}`\n"
-                        f"💰 *Rendimiento Final:* `+{rendimiento_acumulado:.2f}%`\n"
-                        f"🔥 _¡Camión cargado con éxito! Posición cerrada en el objetivo._"
-                    )
-                    self.enviar_telegram(msg)
-                    del self.estado["posiciones_abiertas"][ticker]
-                    self.guardar_estado()
-                    continue
 
-                # 2. SALIDA PARCIAL AL +15% (REGLA FREE RIDER)
+                # 1. SALIDA PARCIAL AL +15% (REGLA FREE RIDER)
                 if rendimiento_acumulado >= 15.0 and not pos.get("salida_parcial_ejecutada", False):
                     pos["salida_parcial_ejecutada"] = True
                     pos["stop_loss"] = pos["precio_entrada"]
@@ -238,29 +212,33 @@ class PipelineTradingAlphaTelegram:
                     self.enviar_telegram(msg)
                     self.guardar_estado()
 
-                # 3. TRAILING STOP HOLGADO DINÁMICO
+                # 2. SEGUIMIENTO DINÁMICO (TRAILING STOP SIN LÍMITE)
                 if precio_actual > pos["max_precio_visto"]:
                     pos["max_precio_visto"] = round(precio_actual, 4)
                     
+                    # Colchón de seguridad dinámico de 3.5 ATR tras el cobro parcial para aguantar las curvas
                     multiplicador_stop = 3.5 if pos.get("salida_parcial_ejecutada", False) else 2.2
                     nuevo_stop = precio_actual - (multiplicador_stop * atr_actual)
                     
                     if nuevo_stop > pos["stop_loss"]:
                         pos["stop_loss"] = round(nuevo_stop, 4)
                 
+                # Avisos cada 10% de beneficio acumulado adicional
                 if rendimiento_acumulado - pos["ultimo_rendimiento_notificado"] >= 10.0:
                     pos["ultimo_rendimiento_notificado"] = round(rendimiento_acumulado, 2)
+                    
+                    decoracion = "🏆🚀 SÚPER RUN" if rendimiento_acumulado >= 50.0 else "⚡ SUBIDA CONTROLADA"
                     msg = (
-                        f"⚡ *SUBIDA CONTROLADA* ⚡\n\n"
+                        f"*{decoracion}*\n\n"
                         f"💎 *Activo:* `{ticker}`\n"
                         f"💵 *Precio:* `${precio_actual:.4f}`\n"
                         f"🔥 *Beneficio actual:* `+{rendimiento_acumulado:.2f}%`\n"
-                        f"🛡️ *Ajuste de Stop:* `${pos['stop_loss']:.4f}`"
+                        f"🛡️ *Ajuste de Stop Dinámico:* `${pos['stop_loss']:.4f}`"
                     )
                     self.enviar_telegram(msg)
                     self.guardar_estado()
                     
-                # 4. SALIDA POR TACTO DE STOP
+                # 3. DISPARO DE SALIDA (Toque del Stop Dinámico)
                 if precio_actual <= pos["stop_loss"]:
                     rendimiento_final = ((pos["stop_loss"] - pos["precio_entrada"]) / pos["precio_entrada"]) * 100
                     tipo_salida = "TRAILING STOP (FREE RIDER)" if pos.get("salida_parcial_ejecutada", False) else "STOP LOSS"
@@ -269,7 +247,7 @@ class PipelineTradingAlphaTelegram:
                         f"🚨 *DISPARO DE {tipo_salida}* 🚨\n\n"
                         f"📉 *Activo:* `{ticker}`\n"
                         f"🚪 *Precio Salida:* `${pos['stop_loss']:.4f}`\n"
-                        f"💰 *Resultado Neto:* `{rendimiento_final:+.2f}%`"
+                        f"💰 *Resultado Neto de esta mitad:* `{rendimiento_final:+.2f}%`"
                     )
                     self.enviar_telegram(msg)
                     del self.estado["posiciones_abiertas"][ticker]
@@ -297,9 +275,8 @@ def ejecutar_ciclo_radar(bot):
             if 'watchlist_dinamica' in locals(): del watchlist_dinamica
             gc.collect()
 
-# --- INICIALIZACIÓN DEL SERVIDOR Y DEL RADAR ---
+# --- INICIALIZACIÓN ---
 if __name__ == "__main__":
-    # Creamos la instancia y en el constructur se enviará el mensaje de inicio
     instancia_bot = PipelineTradingAlphaTelegram()
     
     hilo_servidor = threading.Thread(target=iniciar_servidor_web, daemon=True)
