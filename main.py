@@ -24,22 +24,21 @@ instancia_bot = None
 # Candado global para evitar ejecuciones simultáneas que saturen la RAM
 lock_escaneo = threading.Lock()
 
-# --- SERVIDOR WEB AUXILIAR ---
+# --- SERVIDOR WEB AUXILIAR (Garantiza el 200 OK para Cron-Job y Render) ---
 class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
-        self.wfile.write(b"OK")
-        
-        if instancia_bot is not None and not lock_escaneo.locked():
-            threading.Thread(target=ejecutar_ciclo_radar, args=(instancia_bot,), daemon=True).start()
+        self.wfile.write(b"Bot Activo y Patrullando")
 
-    def log_message(self, format, *args): return
+    def log_message(self, format, *args): 
+        return  # Silencia los logs de peticiones HTTP para mantener limpia la consola
 
 def iniciar_servidor_web():
     puerto = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
+    print(f"🌍 Servidor Web de pings levantado con éxito en el puerto {puerto}")
     server.serve_forever()
 # --------------------------------------------------------------------------------------
 
@@ -267,20 +266,38 @@ def ejecutar_ciclo_radar(bot):
         
     with lock_escaneo:
         try:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Iniciando escaneo de mercado...")
             bot.gestionar_trailing_stops()
             watchlist_dinamica = bot.obtener_top_ganadoras_del_mercado()
             if watchlist_dinamica:
                 bot.escanear_intradiario_concurrente(watchlist_dinamica)
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Escaneo completado con éxito.")
+        except Exception as e:
+            print(f"❌ Error durante el ciclo de escaneo: {e}")
         finally:
             if 'watchlist_dinamica' in locals(): del watchlist_dinamica
             gc.collect()
 
+# --- BUCLE DE CONTROL CONTINUO EN SEGUNDO PLANO ---
+def ejecutar_ciclo_continuo_bot(bot):
+    print("🤖 Hilo del radar de trading iniciado en segundo plano.")
+    while True:
+        if es_horario_mercado():
+            ejecutar_ciclo_radar(bot)
+            # Frecuencia de escaneo: Espera 5 minutos (300 segundos) entre análisis completos
+            time.sleep(300)
+        else:
+            print("💤 Fuera de horario de mercado. Esperando apertura...")
+            time.sleep(60)
+
 # --- INICIALIZACIÓN ---
 if __name__ == "__main__":
+    # 1. Inicializar la lógica de control del bot
     instancia_bot = PipelineTradingAlphaTelegram()
     
-    hilo_servidor = threading.Thread(target=iniciar_servidor_web, daemon=True)
-    hilo_servidor.start()
+    # 2. Arrancar el bot de trading en un hilo paralelo para que no bloquee el puerto de Render
+    hilo_bot = threading.Thread(target=ejecutar_ciclo_continuo_bot, args=(instancia_bot,), daemon=True)
+    hilo_bot.start()
     
-    while True:
-        time.sleep(1)
+    # 3. Arrancar el servidor web de Render en el hilo principal
+    iniciar_servidor_web()
