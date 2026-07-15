@@ -55,8 +55,8 @@ class PipelineTradingAlphaTelegram:
                 rsi = 100 - (100 / (1 + (di['Close'].diff().clip(lower=0).rolling(14).mean() / -di['Close'].diff().clip(upper=0).rolling(14).mean()).iloc[-1]))
                 vol_ratio = di['Volume'].iloc[-1] / di['Volume'].rolling(20).mean().iloc[-1]
                 
-                if p > ma200 and 30 < rsi < 85 and vol_ratio > 2.5 and ticker not in self.estado["posiciones"]:
-                    cat = "🟥 SÚPER COHETE (>50%)" if vol_ratio >= 4.0 else "🟨 TENDENCIA FUERTE (15-30%)"
+                if p > ma200 and 30 < rsi < 85 and vol_ratio > 3.0 and ticker not in self.estado["posiciones"]:
+                    cat = "🟥 SÚPER COHETE (>50%)" if vol_ratio >= 4.5 else "🟨 TENDENCIA FUERTE (15-30%)"
                     atr = (di['High']-di['Low']).rolling(14).mean().iloc[-1]
                     self.estado["posiciones"][ticker] = {"entrada": p, "stop": p - (2.2 * atr), "max": p, "parcial": False}
                     self.enviar_tg(f"📡 *ALERTA {ticker}*\n🚨 {cat}\n💰 Precio: `{p:.4f}`\n📊 Vol: `{vol_ratio:.1f}x` | RSI: `{rsi:.1f}`")
