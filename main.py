@@ -11,14 +11,13 @@ class WebServerHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot V12 Activo y funcionando")
+        self.wfile.write(b"Bot V12-Total Activo")
 
 class PipelineTradingAlphaTelegram:
     def __init__(self):
         self.archivo = "estado_remolazo_final.json"
-        self.activos = ["FFAI", "ALLO", "CRDF", "ALT", "IOVA", "CHRS", "AVXL", "TNXP"]
         self.estado = self.cargar_estado()
-        self.enviar_tg("ðŸ›¡ï¸ *SISTEMA V12: AUTOMATIZADO, FILTRADO Y GESTIONADO*")
+        self.enviar_tg("🛡️ *SISTEMA V12-TOTAL: ESCANEO DE MERCADO ACTIVO*")
 
     def cargar_estado(self):
         if os.path.exists(self.archivo):
@@ -33,22 +32,34 @@ class PipelineTradingAlphaTelegram:
                            json={"chat_id": "2047038250", "text": msg, "parse_mode": "Markdown"}, timeout=5)
         except: pass
 
+    def obtener_tickers(self):
+        # Esta función busca los top ganadores del mercado igual que tu V10
+        try:
+            url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&scrIds=day_gainers&count=40"
+            r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=8)
+            quotes = r.json()["finance"]["result"][0]["quotes"]
+            return [q["symbol"] for q in quotes if "^" not in q["symbol"] and len(q["symbol"]) <= 5]
+        except: return ["FFAI", "ALLO", "CRDF", "ALT", "IOVA", "CHRS", "AVXL", "TNXP"]
+
     def procesar(self):
-        df_d = yf.download(" ".join(self.activos), period="1y", interval="1d", group_by="ticker", progress=False)
-        df_i = yf.download(" ".join(self.activos), period="5d", interval="15m", group_by="ticker", progress=False)
-        for ticker in self.activos:
+        tickers = self.obtener_tickers()
+        df_d = yf.download(" ".join(tickers), period="1y", interval="1d", group_by="ticker", progress=False)
+        df_i = yf.download(" ".join(tickers), period="5d", interval="15m", group_by="ticker", progress=False)
+        
+        for ticker in tickers:
             try:
-                dd = df_d[ticker].dropna() if len(self.activos) > 1 else df_d.dropna()
-                di = df_i[ticker].dropna() if len(self.activos) > 1 else df_i.dropna()
+                dd = df_d[ticker].dropna() if len(tickers) > 1 else df_d.dropna()
+                di = df_i[ticker].dropna() if len(tickers) > 1 else df_i.dropna()
                 p = di['Close'].iloc[-1]
                 ma200 = dd['Close'].rolling(200).mean().iloc[-1]
                 rsi = 100 - (100 / (1 + (di['Close'].diff().clip(lower=0).rolling(14).mean() / -di['Close'].diff().clip(upper=0).rolling(14).mean()).iloc[-1]))
                 vol_ratio = di['Volume'].iloc[-1] / di['Volume'].rolling(20).mean().iloc[-1]
+                
                 if p > ma200 and 30 < rsi < 85 and vol_ratio > 2.5 and ticker not in self.estado["posiciones"]:
-                    cat = "ðŸŸ¥ SÃšPER COHETE (>50%)" if vol_ratio >= 4.0 else "ðŸŸ¨ TENDENCIA FUERTE (15-30%)"
+                    cat = "🟥 SÚPER COHETE (>50%)" if vol_ratio >= 4.0 else "🟨 TENDENCIA FUERTE (15-30%)"
                     atr = (di['High']-di['Low']).rolling(14).mean().iloc[-1]
                     self.estado["posiciones"][ticker] = {"entrada": p, "stop": p - (2.2 * atr), "max": p, "parcial": False}
-                    self.enviar_tg(f"ðŸ“¡ *ALERTA {ticker}*\nðŸš¨ {cat}\nðŸ’° Precio: `{p:.4f}`\nðŸ“Š Vol: `{vol_ratio:.1f}x` | RSI: `{rsi:.1f}`")
+                    self.enviar_tg(f"📡 *ALERTA {ticker}*\n🚨 {cat}\n💰 Precio: `{p:.4f}`\n📊 Vol: `{vol_ratio:.1f}x` | RSI: `{rsi:.1f}`")
                     self.guardar_estado()
             except: pass
 
@@ -64,12 +75,12 @@ class PipelineTradingAlphaTelegram:
                 rend = ((p - pos["entrada"]) / pos["entrada"]) * 100
                 if rend >= 15.0 and not pos["parcial"]:
                     pos["parcial"] = True; pos["stop"] = pos["entrada"]
-                    self.enviar_tg(f"ðŸ’° *PARCIAL {ticker} (+15%)*. Stop movido a entrada.")
+                    self.enviar_tg(f"💰 *PARCIAL {ticker} (+15%)*. Stop movido a entrada.")
                 if p > pos["max"]:
                     pos["max"] = p
                     pos["stop"] = p - (1.5 * (data['High']-data['Low']).rolling(14).mean().iloc[-1])
                 if p <= pos["stop"]:
-                    self.enviar_tg(f"ðŸš¨ *SALIDA {ticker}*. Res: `{rend:.2f}%`")
+                    self.enviar_tg(f"🚨 *SALIDA {ticker}*. Res: `{rend:.2f}%`")
                     del self.estado["posiciones"][ticker]
                 self.guardar_estado()
             except: pass
@@ -83,7 +94,6 @@ def ejecutar(bot):
 
 def iniciar_servidor_web():
     puerto = int(os.environ.get("PORT", 10000))
-    print(f"ðŸŒ Servidor Web en puerto {puerto}")
     server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
     server.serve_forever()
 
