@@ -4,6 +4,29 @@ from datetime import datetime
 import pytz
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# CONFIGURACIÓN SILENCIOSA
+import logging
+logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+logging.getLogger('requests').setLevel(logging.CRITICAL)
+
+# --- SERVIDOR WEB AUXILIAR ESTÁNDAR (Garantiza el paso de pings de Render) ---
+class WebServerHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"Bot Activo y Patrullando")
+
+    def log_message(self, format, *args): 
+        return  # Silencia los logs de peticiones HTTP para mantener limpia la consola
+
+def iniciar_servidor_web():
+    puerto = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
+    print(f"🌍 Servidor Web de pings levantado con éxito en el puerto {puerto}")
+    server.serve_forever()
+
+# --- CLASE PRINCIPAL ---
 class PipelineTradingAlphaTelegram:
     def __init__(self, telegram_token="8620604654:AAEsvDlxfzCpICHtTyMg0HYApvKXwzJ9Xys", telegram_chat_id="2047038250"):
         self.token = telegram_token
@@ -100,13 +123,30 @@ class PipelineTradingAlphaTelegram:
                     self.guardar_estado()
             except: pass
 
-if __name__ == "__main__":
-    bot = PipelineTradingAlphaTelegram()
-    threading.Thread(target=lambda: HTTPServer(("0.0.0.0", int(os.environ.get("PORT", 10000))), 
-                     lambda *args: None).serve_forever(), daemon=True).start()
-    
+# --- BUCLE DE CONTROL EN SEGUNDO PLANO ---
+def ejecutar_ciclo_continuo_bot(bot):
+    print("🤖 Hilo del radar de trading iniciado en segundo plano.")
     while True:
-        if 15 <= datetime.now(pytz.timezone('Europe/Madrid')).hour < 22:
+        zona_local = pytz.timezone('Europe/Madrid')
+        ahora = datetime.now(zona_local)
+        
+        # Lunes a Viernes de 15:00 a 22:00 CET
+        if ahora.weekday() < 5 and (15 <= ahora.hour < 22):
+            print(f"[{ahora.strftime('%H:%M:%S')}] Escaneando y gestionando posiciones...")
             bot.gestionar_maximizar()
             bot.procesar()
-        time.sleep(300)
+            time.sleep(300)  # Espera de 5 minutos
+        else:
+            time.sleep(60)   # Espera de 1 minuto fuera de horario
+
+# --- EJECUCIÓN INICIAL ---
+if __name__ == "__main__":
+    # 1. Inicializar lógica
+    bot = PipelineTradingAlphaTelegram()
+    
+    # 2. Arrancar el bot de trading en un hilo paralelo para que no bloquee a Render
+    hilo_bot = threading.Thread(target=ejecutar_ciclo_continuo_bot, args=(bot,), daemon=True)
+    hilo_bot.start()
+    
+    # 3. Levantar el servidor web en el hilo principal (Esto asegura el "200 OK" y responde correctamente a Render)
+    iniciar_servidor_web()
