@@ -17,7 +17,7 @@ class PipelineTradingAlphaTelegram:
     def __init__(self):
         self.archivo = "estado_remolazo_final.json"
         self.estado = self.cargar_estado()
-        # Configuración de mejoras[span_1](start_span)[span_1](end_span)
+        # Configuración de mejoras para filtrar ruido[span_1](start_span)[span_1](end_span)
         self.config = {
             'price_range': (1.0, 50.0),
             'vol_ratio_min': 3.5,
@@ -60,7 +60,7 @@ class PipelineTradingAlphaTelegram:
                 di = df_i[ticker].dropna() if len(tickers) > 1 else df_i.dropna()
                 p = di['Close'].iloc[-1]
                 
-                # Filtro de Precio añadido[span_3](start_span)[span_3](end_span)
+                # Filtro de Precio aplicado[span_3](start_span)[span_3](end_span)
                 if not (self.config['price_range'][0] <= p <= self.config['price_range'][1]):
                     continue
 
@@ -71,7 +71,7 @@ class PipelineTradingAlphaTelegram:
                 if p > ma200 and 45 < rsi < 75 and vol_ratio > self.config['vol_ratio_min'] and ticker not in self.estado["posiciones"]:
                     cat = "🟥 SÚPER COHETE (>50%)" if vol_ratio >= 5.0 else "🟨 TENDENCIA FUERTE (15-30%)"
                     atr = (di['High']-di['Low']).rolling(14).mean().iloc[-1]
-                    # Guardamos tiempo de entrada para el bloqueo[span_4](start_span)[span_4](end_span)
+                    # Registro de tiempo para bloqueo de 30 min[span_4](start_span)[span_4](end_span)
                     self.estado["posiciones"][ticker] = {
                         "entrada": p, "max": p, "parcial": False, 
                         "timestamp": datetime.now().isoformat(), "active_trailing": False
@@ -121,6 +121,11 @@ def ejecutar(bot):
             bot.gestionar_maximizar()
             bot.procesar()
         time.sleep(300)
+
+def iniciar_servidor_web():
+    puerto = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", puerto), WebServerHandler)
+    server.serve_forever()
 
 if __name__ == "__main__":
     bot = PipelineTradingAlphaTelegram()
