@@ -7,7 +7,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 
-# Silenciar logs internos de yfinance para mantener la consola limpia
+# Silenciar logs internos de yfinance
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 # ==============================================================================
@@ -35,11 +35,9 @@ def enviar_alerta_telegram(mensaje):
 # ==============================================================================
 # 2. ADAPTACIÓN DINÁMICA DEL UMBRAL DE RVOL SEGÚN LA HORA DE LA SESIÓN
 # ==============================================================================
-# Forzar la hora local de España para que el Cron Job dispare el filtro correcto
 AHORA_ESPAÑA = datetime.datetime.now(ZoneInfo("Europe/Madrid"))
 hora_actual = AHORA_ESPAÑA.time()
 
-# El mercado abre a las 15:30 y cierra a las 22:00 (Hora Española - CEST)
 if hora_actual < datetime.time(18, 0):
   RVOL_MINIMO_REQUERIDO = 2.0
   fase_mercado = "Apertura / Arranque Intradiario"
@@ -50,8 +48,18 @@ else:
   RVOL_MINIMO_REQUERIDO = 4.0
   fase_mercado = "Tramo Final (Power Hour)"
 
-print(f"--- ESCÁNER RENDER CRON EN FASE: {fase_mercado.upper()} ---")
+print(f"--- ESCÁNER HIGH-ALPHA OPTIMIZADO: {fase_mercado.upper()} ---")
 print(f"Exigencia de RVOL ajustada automáticamente a: {RVOL_MINIMO_REQUERIDO}x")
+
+mensaje_inicio = (
+    f"🚀 *ESCANEADOR HIGH-ALPHA v2 ACTIVADO* 🚀\n\n"
+    f"• *Fase de Mercado:* `{fase_mercado}`\n"
+    f"• *Filtro RVOL Dinámico:* `≥ {RVOL_MINIMO_REQUERIDO}x`\n"
+    f"• *Filtros Avanzados:* Breakout 20D | Precio ($1.50 - $30.00)\n"
+    f"• *Filtros Nuevos:* Tendencia SMA200 | Cap. Negociación | Toes Exhaustión (<25%)\n"
+    f"⏳ *Estado:* Analizando mercado y filtrando riesgos..."
+)
+enviar_alerta_telegram(mensaje_inicio)
 
 
 # ==============================================================================
@@ -97,38 +105,50 @@ RISK_PERCENTAGE = 0.01  # Riesgo del 1% por operación
 MAX_RISK_USD = TOTAL_CAPITAL * RISK_PERCENTAGE
 
 end_date = datetime.date.today()
-start_date = end_date - datetime.timedelta(days=120)
+start_date = end_date - datetime.timedelta(days=250)  # Ampliado a 250 para SMA200
 
 signals_list = []
 mensajes_telegram = (
-    "🔥 *ALERTA EXPLOSIVA DETECTADA (>50% RALLIES)* 🔥\n"
+    "🔥 *ALERTA EXPLOSIVA FILTRADA (SWING PRO)* 🔥\n"
     "----------------------------------------\n\n"
 )
 hay_senales = False
 
 
 # ==============================================================================
-# 4. PROCESAMIENTO TÉCNICO Y FILTRADO
+# 4. PROCESAMIENTO TÉCNICO Y FILTRADO AVANZADO
 # ==============================================================================
 for ticker in TOP_UNIVERSE:
   try:
-    df = yf.download(
-        ticker,
-        start=start_date,
-        end=end_date,
-        progress=False,
-        auto_adjust=False,
-        threads=False,
-    )
+    tk = yf.Ticker(ticker)
 
-    if df is None or df.empty or len(df) < 30:
+    # 1. Filtro de Noticias / Earnings (-2 a +3 días)
+    has_near_earnings = False
+    try:
+      earnings_df = tk.get_earnings_dates(limit=4)
+      if earnings_df is not None and not earnings_df.empty:
+        today_ts = pd.Timestamp(datetime.date.today())
+        for idx in earnings_df.index:
+          earn_date = pd.Timestamp(idx).tz_localize(None).normalize()
+          diff_days = (earn_date - today_ts).days
+          if -2 <= diff_days <= 3:
+            has_near_earnings = True
+            break
+    except Exception:
+      pass
+
+    if has_near_earnings:
+      continue
+
+    # 2. Descarga de datos históricos (mínimo 200 sesiones para la SMA200)
+    df = tk.history(start=start_date, end=end_date, auto_adjust=False)
+
+    if df is None or df.empty or len(df) < 200:
       continue
 
     df = df.dropna()
-    if isinstance(df.columns, pd.MultiIndex):
-      df.columns = df.columns.get_level_values(0)
 
-    # 1. Indicador ATR (14 períodos)
+    # Indicadores técnicos
     high_low = df["High"] - df["Low"]
     high_close = np.abs(df["High"] - df["Close"].shift())
     low_close = np.abs(df["Low"] - df["Close"].shift())
@@ -136,8 +156,8 @@ for ticker in TOP_UNIVERSE:
     true_range = np.max(ranges, axis=1)
     df["ATR"] = true_range.rolling(window=14).mean()
 
-    # 2. Promedio de volumen diario de 10 ruedas
     df["Vol_Media_10"] = df["Volume"].rolling(window=10).mean()
+    df["SMA_200"] = df["Close"].rolling(window=200).mean()
 
     last_row = df.iloc[-1]
     prev_row = df.iloc[-2]
@@ -147,21 +167,35 @@ for ticker in TOP_UNIVERSE:
     prev_close = float(prev_row["Close"])
     atr = float(last_row["ATR"])
     vol_media_10 = float(last_row["Vol_Media_10"])
+    sma_200 = float(last_row["SMA_200"])
 
-    # Cálculo del RVOL acumulado
+    # Métricas clave
     rvol_diario = volume / vol_media_10 if vol_media_10 > 0 else 0.0
     variacion_dia = ((close_price - prev_close) / prev_close) * 100
+    volumen_efectivo_usd = close_price * volume
 
-    # 3. Filtro Estructural: Breakout del máximo de los últimos 20 días
+    # Breakout del máximo de los últimos 20 días (excluyendo la vela actual)
     max_20d = df["High"].iloc[-21:-1].max()
     es_breakout = close_price > max_20d
 
-    # CONDICIONALES APLICADOS
-    is_valid_price = 1.50 <= close_price <= 20.00
+    # CONDICIONALES DE ENTRADA MEJORADAS
+    is_valid_price = 1.50 <= close_price <= 30.00
     is_high_rvol = rvol_diario >= RVOL_MINIMO_REQUERIDO
-    is_strong_move = variacion_dia >= 4.0
+    # Rango saludable: sube al menos 4% pero NO se excede del 25% (evita clímax de techo)
+    is_healthy_move = 4.0 <= variacion_dia <= 25.00
+    # Filtro de Tendencia Macro: Precio por encima de la SMA de 200
+    is_above_sma200 = close_price > sma_200
+    # Filtro de Liquidez Mínima: Al menos $5 millones negociados en la sesión
+    has_liquidity = volumen_efectivo_usd >= 5_000_000
 
-    if es_breakout and is_valid_price and is_high_rvol and is_strong_move:
+    if (
+        es_breakout
+        and is_valid_price
+        and is_high_rvol
+        and is_healthy_move
+        and is_above_sma200
+        and has_liquidity
+    ):
       stop_loss_price = close_price - (3.0 * atr)
       risk_per_share = close_price - stop_loss_price
 
@@ -180,19 +214,19 @@ for ticker in TOP_UNIVERSE:
             "Variación Día": f"+{round(variacion_dia, 2)}%",
             "Precio ($)": round(close_price, 2),
             "RVOL": f"{round(rvol_diario, 1)}x",
-            "Breakout 20D ($)": round(max_20d, 2),
+            "Volumen Negociado ($M)": round(volumen_efectivo_usd / 1e6, 2),
             "Stop Loss ($)": round(stop_loss_price, 2),
             "Acciones": shares_to_buy,
             "Inversión ($)": round(total_investment, 2),
         })
 
         mensajes_telegram += (
-            f"📡 *ALERTA EXPLOSIVA: `{ticker}`*\n"
+            f"📡 *ALERTA FILTRADA: `{ticker}`*\n"
             f"🚨 *Tipo:* `{cat_alerta}`\n"
             f"📈 *Variación Sesión:* `+{round(variacion_dia, 2)}%`\n"
             f"📊 *RVOL Acumulado:* `🔥 {round(rvol_diario, 1)}x media`\n"
             f"💰 *Precio Actual:* `${round(close_price, 2)} USD`\n"
-            f"🎯 *Máximo 20D Superado:* `${round(max_20d, 2)} USD`\n"
+            f"🌊 *Volumen Negociado:* `${round(volumen_efectivo_usd / 1e6, 2)}M`\n"
             f"🛡️ *Stop Loss (3.0x ATR):* `${round(stop_loss_price, 2)} USD`\n"
             f"🔢 *Acciones Recomendadas:* `{shares_to_buy}`\n"
             f"⚖️ *Riesgo Controlado:* `$200 (1%)`\n"
@@ -204,23 +238,21 @@ for ticker in TOP_UNIVERSE:
 
 
 # ==============================================================================
-# 5. ENVÍO DE RESULTADOS Y CIERRE DEL SCRIPT
+# 5. ENVÍO DE RESULTADOS
 # ==============================================================================
 result_df = pd.DataFrame(signals_list)
 
 if hay_senales:
-  print("¡Patrones de alta probabilidad detectados!")
+  print("¡Candidatos de alta calidad detectados bajo los filtros pro!")
   print(result_df)
   enviar_alerta_telegram(mensajes_telegram)
 else:
   print(
       f"Escaneo completado a las {hora_actual.strftime('%H:%M')}. Sin alertas"
-      " hoy."
+      " que cumplan con la tendencia SMA200 y los filtros de liquidez."
   )
-  # Opcional: si no quieres que avise a Telegram cada vez que esté vacía la lista,
-  # puedes comentar la línea de abajo para evitar spam en el móvil.
   enviar_alerta_telegram(
       f"🔍 *Escaneo Finalizado ({fase_mercado})*\nNingún activo superó los"
-      f" filtros de Breakout 20D y RVOL ≥ {RVOL_MINIMO_REQUERIDO}x en este"
-      " pase."
+      f" filtros estrictos (Breakout 20D, RVOL ≥ {RVOL_MINIMO_REQUERIDO}x,"
+      " SMA200 y volumen monetario)."
   )
