@@ -48,16 +48,17 @@ else:
   RVOL_MINIMO_REQUERIDO = 4.0
   fase_mercado = "Tramo Final (Power Hour)"
 
-print(f"--- ESCÁNER HIGH-ALPHA OPTIMIZADO: {fase_mercado.upper()} ---")
+print(f"--- ESCÁNER HIGH-ALPHA MULTIBAGGER: {fase_mercado.upper()} ---")
 print(f"Exigencia de RVOL ajustada automáticamente a: {RVOL_MINIMO_REQUERIDO}x")
 
 mensaje_inicio = (
-    f"🚀 *ESCANEADOR HIGH-ALPHA v2 ACTIVADO* 🚀\n\n"
+    f"🚀 *ESCANEADOR MULTIBAGGER v3 ACTIVADO* 🚀\n\n"
     f"• *Fase de Mercado:* `{fase_mercado}`\n"
     f"• *Filtro RVOL Dinámico:* `≥ {RVOL_MINIMO_REQUERIDO}x`\n"
     f"• *Filtros Avanzados:* Breakout 20D | Precio ($1.50 - $30.00)\n"
-    f"• *Filtros Nuevos:* Tendencia SMA200 | Cap. Negociación | Toes Exhaustión (<25%)\n"
-    f"⏳ *Estado:* Analizando mercado y filtrando riesgos..."
+    f"• *Filtros Pro:* Tendencia SMA200 | Compresión ATR | Cap ($50M-$2B)\n"
+    f"• *Metadatos:* Insider Buy (<30D)\n"
+    f"⏳ *Estado:* Buscando patrones de alta compresión..."
 )
 enviar_alerta_telegram(mensaje_inicio)
 
@@ -109,20 +110,28 @@ start_date = end_date - datetime.timedelta(days=250)  # Ampliado a 250 para SMA2
 
 signals_list = []
 mensajes_telegram = (
-    "🔥 *ALERTA EXPLOSIVA FILTRADA (SWING PRO)* 🔥\n"
+    "🔥 *ALERTA MULTIBAGGER FILTRADA (PRO)* 🔥\n"
     "----------------------------------------\n\n"
 )
 hay_senales = False
 
 
 # ==============================================================================
-# 4. PROCESAMIENTO TÉCNICO Y FILTRADO AVANZADO
+# 4. PROCESAMIENTO TÉCNICO, FILTRADO AVANZADO E INSIDERS
 # ==============================================================================
 for ticker in TOP_UNIVERSE:
   try:
     tk = yf.Ticker(ticker)
 
-    # 1. Filtro de Noticias / Earnings (-2 a +3 días)
+    # 1. Filtro de Capitalización de Mercado (Evita chicharros extremos y megacapitalizadas)
+    try:
+      market_cap = tk.info.get("marketCap", 0)
+      if market_cap and not (50_000_000 <= market_cap <= 2_000_000_000):
+        continue
+    except Exception:
+      pass
+
+    # 2. Filtro de Noticias / Earnings (-2 a +3 días)
     has_near_earnings = False
     try:
       earnings_df = tk.get_earnings_dates(limit=4)
@@ -140,7 +149,32 @@ for ticker in TOP_UNIVERSE:
     if has_near_earnings:
       continue
 
-    # 2. Descarga de datos históricos (mínimo 200 sesiones para la SMA200)
+    # 3. Verificación informativa de Compras de Insiders en los últimos 30 días (NO FILTRA)
+    has_recent_insider_buying = False
+    try:
+      insider_df = tk.insider_purchases
+      if insider_df is not None and not insider_df.empty:
+        date_col = None
+        for col in ["Start Date", "Date", "Filing Date"]:
+          if col in insider_df.columns:
+            date_col = col
+            break
+
+        if date_col and "Shares" in insider_df.columns:
+          insider_df[date_col] = pd.to_datetime(insider_df[date_col], errors="coerce")
+          limite_fecha = pd.Timestamp(datetime.date.today()) - pd.Timedelta(days=30)
+          
+          compras_recientes = insider_df[
+              (insider_df[date_col] >= limite_fecha) & 
+              (insider_df["Shares"] > 0)
+          ]
+          
+          if not compras_recientes.empty:
+            has_recent_insider_buying = True
+    except Exception:
+      pass
+
+    # 4. Descarga de datos históricos (mínimo 200 sesiones para la SMA200)
     df = tk.history(start=start_date, end=end_date, auto_adjust=False)
 
     if df is None or df.empty or len(df) < 200:
@@ -148,7 +182,7 @@ for ticker in TOP_UNIVERSE:
 
     df = df.dropna()
 
-    # Indicadores técnicos
+    # Indicadores técnicos y de compresión
     high_low = df["High"] - df["Low"]
     high_close = np.abs(df["High"] - df["Close"].shift())
     low_close = np.abs(df["Low"] - df["Close"].shift())
@@ -178,14 +212,16 @@ for ticker in TOP_UNIVERSE:
     max_20d = df["High"].iloc[-21:-1].max()
     es_breakout = close_price > max_20d
 
-    # CONDICIONALES DE ENTRADA MEJORADAS
+    # NUEVO FILTRO ESTADÍSTICO: Compresión de Volatilidad Previa (ATR últimos 5 días < ATR últimos 20 días)
+    atr_5d = df["ATR"].iloc[-5:].mean()
+    atr_20d = df["ATR"].iloc[-20:].mean()
+    is_compressed = atr_5d < atr_20d
+
+    # CONDICIONALES DE ENTRADA MULTIBAGGER
     is_valid_price = 1.50 <= close_price <= 30.00
     is_high_rvol = rvol_diario >= RVOL_MINIMO_REQUERIDO
-    # Rango saludable: sube al menos 4% pero NO se excede del 25% (evita clímax de techo)
     is_healthy_move = 4.0 <= variacion_dia <= 25.00
-    # Filtro de Tendencia Macro: Precio por encima de la SMA de 200
     is_above_sma200 = close_price > sma_200
-    # Filtro de Liquidez Mínima: Al menos $5 millones negociados en la sesión
     has_liquidity = volumen_efectivo_usd >= 5_000_000
 
     if (
@@ -195,6 +231,7 @@ for ticker in TOP_UNIVERSE:
         and is_healthy_move
         and is_above_sma200
         and has_liquidity
+        and is_compressed
     ):
       stop_loss_price = close_price - (3.0 * atr)
       risk_per_share = close_price - stop_loss_price
@@ -207,6 +244,7 @@ for ticker in TOP_UNIVERSE:
         cat_alerta = (
             "🔥 SÚPER COHETE" if rvol_diario >= 6.0 else "⚡ BREAKOUT DE MOMENTUM"
         )
+        insider_tag = "✅ Sí" if has_recent_insider_buying else "❌ No"
 
         signals_list.append({
             "Ticker": ticker,
@@ -215,18 +253,21 @@ for ticker in TOP_UNIVERSE:
             "Precio ($)": round(close_price, 2),
             "RVOL": f"{round(rvol_diario, 1)}x",
             "Volumen Negociado ($M)": round(volumen_efectivo_usd / 1e6, 2),
+            "Insider Buy (30D)": insider_tag,
             "Stop Loss ($)": round(stop_loss_price, 2),
             "Acciones": shares_to_buy,
             "Inversión ($)": round(total_investment, 2),
         })
 
         mensajes_telegram += (
-            f"📡 *ALERTA FILTRADA: `{ticker}`*\n"
+            f"📡 *ALERTA MULTIBAGGER: `{ticker}`*\n"
             f"🚨 *Tipo:* `{cat_alerta}`\n"
             f"📈 *Variación Sesión:* `+{round(variacion_dia, 2)}%`\n"
             f"📊 *RVOL Acumulado:* `🔥 {round(rvol_diario, 1)}x media`\n"
             f"💰 *Precio Actual:* `${round(close_price, 2)} USD`\n"
             f"🌊 *Volumen Negociado:* `${round(volumen_efectivo_usd / 1e6, 2)}M`\n"
+            f"📉 *Compresión ATR (Zona Base):* `✅ Activa`\n"
+            f"👔 *Compra Insiders (<30d):* `{insider_tag}`\n"
             f"🛡️ *Stop Loss (3.0x ATR):* `${round(stop_loss_price, 2)} USD`\n"
             f"🔢 *Acciones Recomendadas:* `{shares_to_buy}`\n"
             f"⚖️ *Riesgo Controlado:* `$200 (1%)`\n"
@@ -243,16 +284,15 @@ for ticker in TOP_UNIVERSE:
 result_df = pd.DataFrame(signals_list)
 
 if hay_senales:
-  print("¡Candidatos de alta calidad detectados bajo los filtros pro!")
+  print("¡Candidatos con patrón de compresión y alta calidad detectados!")
   print(result_df)
   enviar_alerta_telegram(mensajes_telegram)
 else:
   print(
       f"Escaneo completado a las {hora_actual.strftime('%H:%M')}. Sin alertas"
-      " que cumplan con la tendencia SMA200 y los filtros de liquidez."
+      " que cumplan con la compresión ATR, tendencia SMA200 y capitalización."
   )
   enviar_alerta_telegram(
       f"🔍 *Escaneo Finalizado ({fase_mercado})*\nNingún activo superó los"
-      f" filtros estrictos (Breakout 20D, RVOL ≥ {RVOL_MINIMO_REQUERIDO}x,"
-      " SMA200 y volumen monetario)."
+      f" filtros estrictos de compresión, breakout 20D y RVOL ≥ {RVOL_MINIMO_REQUERIDO}x."
   )
