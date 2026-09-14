@@ -89,6 +89,17 @@ def ejecutar_escaneo():
     RVOL_MINIMO_REQUERIDO = 4.0
     fase_mercado = "Tramo Final (Power Hour)"
 
+  # Mensaje de inicio para confirmar que el webhook se ha activado
+  enviar_alerta_telegram(
+      "🚀 *ESCANEADOR MULTIBAGGER v3 ACTIVADO* 🚀\n\n"
+      f"• Fase de Mercado: `{fase_mercado}`\n"
+      f"• Filtro RVOL Dinámico: `≥ {RVOL_MINIMO_REQUERIDO}x`\n"
+      "• Filtros Avanzados: Breakout 20D | Precio ($1.50 - $30.00)\n"
+      "• Filtros Pro: Tendencia SMA200 | Compresión ATR | Cap ($50M-$2B)\n"
+      "• Metadatos: Insider Buy (<30D)\n"
+      "⏳ *Estado:* Buscando patrones de alta compresión..."
+  )
+
   print(f"--- EJECUCIÓN WEBHOOK MULTIBAGGER: {fase_mercado.upper()} ---")
 
   TOP_UNIVERSE = obtener_universo()
@@ -99,7 +110,6 @@ def ejecutar_escaneo():
   end_date = datetime.date.today()
   start_date = end_date - datetime.timedelta(days=250)
 
-  signals_list = []
   mensajes_telegram = (
       "🔥 *ALERTA MULTIBAGGER FILTRADA (CRON)* 🔥\n"
       "----------------------------------------\n\n"
@@ -220,7 +230,6 @@ def ejecutar_escaneo():
 
         if risk_per_share > 0:
           shares_to_buy = int(MAX_RISK_USD / risk_per_share)
-          total_investment = shares_to_buy * close_price
           hay_senales = True
 
           cat_alerta = (
