@@ -73,12 +73,21 @@ def obtener_universo():
 
 
 # ==============================================================================
-# 3. LÓGICA DE ESCANEO EN SEGUNDO PLANO
+# 3. LÓGICA DE ESCANEO CON BLOQUEO NOCTURNO ABSOLUTO
 # ==============================================================================
 def tarea_escaneo_background():
   AHORA_ESPAÑA = datetime.datetime.now(ZoneInfo("Europe/Madrid"))
   hora_actual = AHORA_ESPAÑA.time()
+  dia_semana = AHORA_ESPAÑA.weekday()  # 0=Lunes, 4=Viernes, 5=Sábado, 6=Domingo
 
+  # BLOQUEO TOTAL: Si es fin de semana o la hora no está estrictamente entre las 15:30 y las 22:00
+  if dia_semana >= 5 or not (
+      datetime.time(15, 30) <= hora_actual <= datetime.time(22, 0)
+  ):
+    print(f"Bloqueado: Intento de ejecución fuera de horario ({hora_actual}).")
+    return  # Sale inmediatamente sin enviar NINGÚN mensaje a Telegram
+
+  # Definir fases dentro del horario de mercado
   if hora_actual < datetime.time(18, 0):
     RVOL_MINIMO_REQUERIDO = 2.0
     fase_mercado = "Apertura / Arranque Intradiario"
@@ -98,8 +107,6 @@ def tarea_escaneo_background():
       "• Metadatos: Insider Buy (<30D)\n"
       "⏳ *Estado:* Buscando patrones de alta compresión..."
   )
-
-  print(f"--- EJECUCIÓN WEBHOOK MULTIBAGGER: {fase_mercado.upper()} ---")
 
   TOP_UNIVERSE = obtener_universo()
   TOTAL_CAPITAL = 20000.0
@@ -269,10 +276,9 @@ def tarea_escaneo_background():
 # ==============================================================================
 @app.route("/", methods=["GET", "POST"])
 def ejecutar_escaneo():
-  # Lanzamos el escaneo en segundo plano para responder al instante a cron-job.org
   hilo = threading.Thread(target=tarea_escaneo_background)
   hilo.start()
-  return "Webhook recibido. Escaneo en curso...", 200
+  return "Webhook recibido. Validando horario...", 200
 
 
 if __name__ == "__main__":
