@@ -2,6 +2,7 @@
 import datetime
 from zoneinfo import ZoneInfo
 import logging
+from flask import Flask
 import numpy as np
 import pandas as pd
 import requests
@@ -9,6 +10,8 @@ import yfinance as yf
 
 # Silenciar logs internos de yfinance
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
+app = Flask(__name__)
 
 # ==============================================================================
 # 1. CONFIGURACIÓN DE TELEGRAM
@@ -33,38 +36,7 @@ def enviar_alerta_telegram(mensaje):
 
 
 # ==============================================================================
-# 2. ADAPTACIÓN DINÁMICA DEL UMBRAL DE RVOL SEGÚN LA HORA DE LA SESIÓN
-# ==============================================================================
-AHORA_ESPAÑA = datetime.datetime.now(ZoneInfo("Europe/Madrid"))
-hora_actual = AHORA_ESPAÑA.time()
-
-if hora_actual < datetime.time(18, 0):
-  RVOL_MINIMO_REQUERIDO = 2.0
-  fase_mercado = "Apertura / Arranque Intradiario"
-elif hora_actual < datetime.time(20, 0):
-  RVOL_MINIMO_REQUERIDO = 3.0
-  fase_mercado = "Ecuador de Sesión (Midday)"
-else:
-  RVOL_MINIMO_REQUERIDO = 4.0
-  fase_mercado = "Tramo Final (Power Hour)"
-
-print(f"--- ESCÁNER HIGH-ALPHA MULTIBAGGER: {fase_mercado.upper()} ---")
-print(f"Exigencia de RVOL ajustada automáticamente a: {RVOL_MINIMO_REQUERIDO}x")
-
-mensaje_inicio = (
-    f"🚀 *ESCANEADOR MULTIBAGGER v3 ACTIVADO* 🚀\n\n"
-    f"• *Fase de Mercado:* `{fase_mercado}`\n"
-    f"• *Filtro RVOL Dinámico:* `≥ {RVOL_MINIMO_REQUERIDO}x`\n"
-    f"• *Filtros Avanzados:* Breakout 20D | Precio ($1.50 - $30.00)\n"
-    f"• *Filtros Pro:* Tendencia SMA200 | Compresión ATR | Cap ($50M-$2B)\n"
-    f"• *Metadatos:* Insider Buy (<30D)\n"
-    f"⏳ *Estado:* Buscando patrones de alta compresión..."
-)
-enviar_alerta_telegram(mensaje_inicio)
-
-
-# ==============================================================================
-# 3. OBTENCIÓN DINÁMICA DE TOP GAINERS Y WATCHLIST
+# 2. OBTENCIÓN DINÁMICA DE TOP GAINERS Y WATCHLIST
 # ==============================================================================
 def obtener_universo():
   tickers_gainers = []
@@ -99,200 +71,192 @@ def obtener_universo():
   return list(set(tickers_gainers + base_watchlist))
 
 
-TOP_UNIVERSE = obtener_universo()
-
-TOTAL_CAPITAL = 20000.0
-RISK_PERCENTAGE = 0.01  # Riesgo del 1% por operación
-MAX_RISK_USD = TOTAL_CAPITAL * RISK_PERCENTAGE
-
-end_date = datetime.date.today()
-start_date = end_date - datetime.timedelta(days=250)  # Ampliado a 250 para SMA200
-
-signals_list = []
-mensajes_telegram = (
-    "🔥 *ALERTA MULTIBAGGER FILTRADA (PRO)* 🔥\n"
-    "----------------------------------------\n\n"
-)
-hay_senales = False
-
-
 # ==============================================================================
-# 4. PROCESAMIENTO TÉCNICO, FILTRADO AVANZADO E INSIDERS
+# 3. ENDPOINT WEB DISPARADO POR CRON-JOB.ORG
 # ==============================================================================
-for ticker in TOP_UNIVERSE:
-  try:
-    tk = yf.Ticker(ticker)
+@app.route("/", methods=["GET", "POST"])
+def ejecutar_escaneo():
+  AHORA_ESPAÑA = datetime.datetime.now(ZoneInfo("Europe/Madrid"))
+  hora_actual = AHORA_ESPAÑA.time()
 
-    # 1. Filtro de Capitalización de Mercado (Evita chicharros extremos y megacapitalizadas)
+  if hora_actual < datetime.time(18, 0):
+    RVOL_MINIMO_REQUERIDO = 2.0
+    fase_mercado = "Apertura / Arranque Intradiario"
+  elif hora_actual < datetime.time(20, 0):
+    RVOL_MINIMO_REQUERIDO = 3.0
+    fase_mercado = "Ecuador de Sesión (Midday)"
+  else:
+    RVOL_MINIMO_REQUERIDO = 4.0
+    fase_mercado = "Tramo Final (Power Hour)"
+
+  print(f"--- EJECUCIÓN WEBHOOK MULTIBAGGER: {fase_mercado.upper()} ---")
+
+  TOP_UNIVERSE = obtener_universo()
+  TOTAL_CAPITAL = 20000.0
+  RISK_PERCENTAGE = 0.01
+  MAX_RISK_USD = TOTAL_CAPITAL * RISK_PERCENTAGE
+
+  end_date = datetime.date.today()
+  start_date = end_date - datetime.timedelta(days=250)
+
+  signals_list = []
+  mensajes_telegram = (
+      "🔥 *ALERTA MULTIBAGGER FILTRADA (CRON)* 🔥\n"
+      "----------------------------------------\n\n"
+  )
+  hay_senales = False
+
+  for ticker in TOP_UNIVERSE:
     try:
-      market_cap = tk.info.get("marketCap", 0)
-      if market_cap and not (50_000_000 <= market_cap <= 2_000_000_000):
+      tk = yf.Ticker(ticker)
+
+      # Filtro de Capitalización ($50M - $2B)
+      try:
+        market_cap = tk.info.get("marketCap", 0)
+        if market_cap and not (50_000_000 <= market_cap <= 2_000_000_000):
+          continue
+      except Exception:
+        pass
+
+      # Filtro de Earnings (-2 a +3 días)
+      has_near_earnings = False
+      try:
+        earnings_df = tk.get_earnings_dates(limit=4)
+        if earnings_df is not None and not earnings_df.empty:
+          today_ts = pd.Timestamp(datetime.date.today())
+          for idx in earnings_df.index:
+            earn_date = pd.Timestamp(idx).tz_localize(None).normalize()
+            diff_days = (earn_date - today_ts).days
+            if -2 <= diff_days <= 3:
+              has_near_earnings = True
+              break
+      except Exception:
+        pass
+
+      if has_near_earnings:
         continue
-    except Exception:
-      pass
 
-    # 2. Filtro de Noticias / Earnings (-2 a +3 días)
-    has_near_earnings = False
-    try:
-      earnings_df = tk.get_earnings_dates(limit=4)
-      if earnings_df is not None and not earnings_df.empty:
-        today_ts = pd.Timestamp(datetime.date.today())
-        for idx in earnings_df.index:
-          earn_date = pd.Timestamp(idx).tz_localize(None).normalize()
-          diff_days = (earn_date - today_ts).days
-          if -2 <= diff_days <= 3:
-            has_near_earnings = True
-            break
-    except Exception:
-      pass
+      # Insiders a 30 días
+      has_recent_insider_buying = False
+      try:
+        insider_df = tk.insider_purchases
+        if insider_df is not None and not insider_df.empty:
+          date_col = None
+          for col in ["Start Date", "Date", "Filing Date"]:
+            if col in insider_df.columns:
+              date_col = col
+              break
 
-    if has_near_earnings:
+          if date_col and "Shares" in insider_df.columns:
+            insider_df[date_col] = pd.to_datetime(
+                insider_df[date_col], errors="coerce"
+            )
+            limite_fecha = pd.Timestamp(datetime.date.today()) - pd.Timedelta(
+                days=30
+            )
+            compras_recientes = insider_df[
+                (insider_df[date_col] >= limite_fecha)
+                & (insider_df["Shares"] > 0)
+            ]
+            if not compras_recientes.empty:
+              has_recent_insider_buying = True
+      except Exception:
+        pass
+
+      df = tk.history(start=start_date, end=end_date, auto_adjust=False)
+      if df is None or df.empty or len(df) < 200:
+        continue
+
+      df = df.dropna()
+
+      high_low = df["High"] - df["Low"]
+      high_close = np.abs(df["High"] - df["Close"].shift())
+      low_close = np.abs(df["Low"] - df["Close"].shift())
+      ranges = pd.concat([high_low, high_close, low_close], axis=1)
+      true_range = np.max(ranges, axis=1)
+      df["ATR"] = true_range.rolling(window=14).mean()
+
+      df["Vol_Media_10"] = df["Volume"].rolling(window=10).mean()
+      df["SMA_200"] = df["Close"].rolling(window=200).mean()
+
+      last_row = df.iloc[-1]
+      prev_row = df.iloc[-2]
+
+      close_price = float(last_row["Close"])
+      volume = float(last_row["Volume"])
+      prev_close = float(prev_row["Close"])
+      atr = float(last_row["ATR"])
+      vol_media_10 = float(last_row["Vol_Media_10"])
+      sma_200 = float(last_row["SMA_200"])
+
+      rvol_diario = volume / vol_media_10 if vol_media_10 > 0 else 0.0
+      variacion_dia = ((close_price - prev_close) / prev_close) * 100
+      volumen_efectivo_usd = close_price * volume
+
+      max_20d = df["High"].iloc[-21:-1].max()
+      es_breakout = close_price > max_20d
+
+      atr_5d = df["ATR"].iloc[-5:].mean()
+      atr_20d = df["ATR"].iloc[-20:].mean()
+      is_compressed = atr_5d < atr_20d
+
+      is_valid_price = 1.50 <= close_price <= 30.00
+      is_high_rvol = rvol_diario >= RVOL_MINIMO_REQUERIDO
+      is_healthy_move = 4.0 <= variacion_dia <= 25.00
+      is_above_sma200 = close_price > sma_200
+      has_liquidity = volumen_efectivo_usd >= 5_000_000
+
+      if (
+          es_breakout
+          and is_valid_price
+          and is_high_rvol
+          and is_healthy_move
+          and is_above_sma200
+          and has_liquidity
+          and is_compressed
+      ):
+        stop_loss_price = close_price - (3.0 * atr)
+        risk_per_share = close_price - stop_loss_price
+
+        if risk_per_share > 0:
+          shares_to_buy = int(MAX_RISK_USD / risk_per_share)
+          total_investment = shares_to_buy * close_price
+          hay_senales = True
+
+          cat_alerta = (
+              "🔥 SÚPER COHETE"
+              if rvol_diario >= 6.0
+              else "⚡ BREAKOUT DE MOMENTUM"
+          )
+          insider_tag = "✅ Sí" if has_recent_insider_buying else "❌ No"
+
+          mensajes_telegram += (
+              f"📡 *ALERTA MULTIBAGGER: `{ticker}`*\n"
+              f"🚨 *Tipo:* `{cat_alerta}`\n"
+              f"📈 *Variación Sesión:* `+{round(variacion_dia, 2)}%`\n"
+              f"📊 *RVOL Acumulado:* `🔥 {round(rvol_diario, 1)}x media`\n"
+              f"💰 *Precio Actual:* `${round(close_price, 2)} USD`\n"
+              f"🌊 *Volumen Negociado:* `${round(volumen_efectivo_usd / 1e6, 2)}M`\n"
+              f"📉 *Compresión ATR:* `✅ Activa`\n"
+              f"👔 *Compra Insiders (<30d):* `{insider_tag}`\n"
+              f"🛡️ *Stop Loss (3.0x ATR):* `${round(stop_loss_price, 2)} USD`\n"
+              f"🔢 *Acciones Recomendadas:* `{shares_to_buy}`\n"
+              f"⚖️ *Riesgo Controlado:* `$200 (1%)`\n"
+              f"----------------------------------------\n\n"
+          )
+    except Exception:
       continue
 
-    # 3. Verificación informativa de Compras de Insiders en los últimos 30 días (NO FILTRA)
-    has_recent_insider_buying = False
-    try:
-      insider_df = tk.insider_purchases
-      if insider_df is not None and not insider_df.empty:
-        date_col = None
-        for col in ["Start Date", "Date", "Filing Date"]:
-          if col in insider_df.columns:
-            date_col = col
-            break
+  if hay_senales:
+    enviar_alerta_telegram(mensajes_telegram)
+  else:
+    enviar_alerta_telegram(
+        f"🔍 *Escaneo Finalizado ({fase_mercado})*\nNingún activo superó los"
+        f" filtros estrictos de compresión y RVOL ≥ {RVOL_MINIMO_REQUERIDO}x."
+    )
 
-        if date_col and "Shares" in insider_df.columns:
-          insider_df[date_col] = pd.to_datetime(insider_df[date_col], errors="coerce")
-          limite_fecha = pd.Timestamp(datetime.date.today()) - pd.Timedelta(days=30)
-          
-          compras_recientes = insider_df[
-              (insider_df[date_col] >= limite_fecha) & 
-              (insider_df["Shares"] > 0)
-          ]
-          
-          if not compras_recientes.empty:
-            has_recent_insider_buying = True
-    except Exception:
-      pass
-
-    # 4. Descarga de datos históricos (mínimo 200 sesiones para la SMA200)
-    df = tk.history(start=start_date, end=end_date, auto_adjust=False)
-
-    if df is None or df.empty or len(df) < 200:
-      continue
-
-    df = df.dropna()
-
-    # Indicadores técnicos y de compresión
-    high_low = df["High"] - df["Low"]
-    high_close = np.abs(df["High"] - df["Close"].shift())
-    low_close = np.abs(df["Low"] - df["Close"].shift())
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-    true_range = np.max(ranges, axis=1)
-    df["ATR"] = true_range.rolling(window=14).mean()
-
-    df["Vol_Media_10"] = df["Volume"].rolling(window=10).mean()
-    df["SMA_200"] = df["Close"].rolling(window=200).mean()
-
-    last_row = df.iloc[-1]
-    prev_row = df.iloc[-2]
-
-    close_price = float(last_row["Close"])
-    volume = float(last_row["Volume"])
-    prev_close = float(prev_row["Close"])
-    atr = float(last_row["ATR"])
-    vol_media_10 = float(last_row["Vol_Media_10"])
-    sma_200 = float(last_row["SMA_200"])
-
-    # Métricas clave
-    rvol_diario = volume / vol_media_10 if vol_media_10 > 0 else 0.0
-    variacion_dia = ((close_price - prev_close) / prev_close) * 100
-    volumen_efectivo_usd = close_price * volume
-
-    # Breakout del máximo de los últimos 20 días (excluyendo la vela actual)
-    max_20d = df["High"].iloc[-21:-1].max()
-    es_breakout = close_price > max_20d
-
-    # NUEVO FILTRO ESTADÍSTICO: Compresión de Volatilidad Previa (ATR últimos 5 días < ATR últimos 20 días)
-    atr_5d = df["ATR"].iloc[-5:].mean()
-    atr_20d = df["ATR"].iloc[-20:].mean()
-    is_compressed = atr_5d < atr_20d
-
-    # CONDICIONALES DE ENTRADA MULTIBAGGER
-    is_valid_price = 1.50 <= close_price <= 30.00
-    is_high_rvol = rvol_diario >= RVOL_MINIMO_REQUERIDO
-    is_healthy_move = 4.0 <= variacion_dia <= 25.00
-    is_above_sma200 = close_price > sma_200
-    has_liquidity = volumen_efectivo_usd >= 5_000_000
-
-    if (
-        es_breakout
-        and is_valid_price
-        and is_high_rvol
-        and is_healthy_move
-        and is_above_sma200
-        and has_liquidity
-        and is_compressed
-    ):
-      stop_loss_price = close_price - (3.0 * atr)
-      risk_per_share = close_price - stop_loss_price
-
-      if risk_per_share > 0:
-        shares_to_buy = int(MAX_RISK_USD / risk_per_share)
-        total_investment = shares_to_buy * close_price
-        hay_senales = True
-
-        cat_alerta = (
-            "🔥 SÚPER COHETE" if rvol_diario >= 6.0 else "⚡ BREAKOUT DE MOMENTUM"
-        )
-        insider_tag = "✅ Sí" if has_recent_insider_buying else "❌ No"
-
-        signals_list.append({
-            "Ticker": ticker,
-            "Tipo": cat_alerta,
-            "Variación Día": f"+{round(variacion_dia, 2)}%",
-            "Precio ($)": round(close_price, 2),
-            "RVOL": f"{round(rvol_diario, 1)}x",
-            "Volumen Negociado ($M)": round(volumen_efectivo_usd / 1e6, 2),
-            "Insider Buy (30D)": insider_tag,
-            "Stop Loss ($)": round(stop_loss_price, 2),
-            "Acciones": shares_to_buy,
-            "Inversión ($)": round(total_investment, 2),
-        })
-
-        mensajes_telegram += (
-            f"📡 *ALERTA MULTIBAGGER: `{ticker}`*\n"
-            f"🚨 *Tipo:* `{cat_alerta}`\n"
-            f"📈 *Variación Sesión:* `+{round(variacion_dia, 2)}%`\n"
-            f"📊 *RVOL Acumulado:* `🔥 {round(rvol_diario, 1)}x media`\n"
-            f"💰 *Precio Actual:* `${round(close_price, 2)} USD`\n"
-            f"🌊 *Volumen Negociado:* `${round(volumen_efectivo_usd / 1e6, 2)}M`\n"
-            f"📉 *Compresión ATR (Zona Base):* `✅ Activa`\n"
-            f"👔 *Compra Insiders (<30d):* `{insider_tag}`\n"
-            f"🛡️ *Stop Loss (3.0x ATR):* `${round(stop_loss_price, 2)} USD`\n"
-            f"🔢 *Acciones Recomendadas:* `{shares_to_buy}`\n"
-            f"⚖️ *Riesgo Controlado:* `$200 (1%)`\n"
-            f"----------------------------------------\n\n"
-        )
-
-  except Exception:
-    continue
+  return "Escaneo completado con éxito", 200
 
 
-# ==============================================================================
-# 5. ENVÍO DE RESULTADOS
-# ==============================================================================
-result_df = pd.DataFrame(signals_list)
-
-if hay_senales:
-  print("¡Candidatos con patrón de compresión y alta calidad detectados!")
-  print(result_df)
-  enviar_alerta_telegram(mensajes_telegram)
-else:
-  print(
-      f"Escaneo completado a las {hora_actual.strftime('%H:%M')}. Sin alertas"
-      " que cumplan con la compresión ATR, tendencia SMA200 y capitalización."
-  )
-  enviar_alerta_telegram(
-      f"🔍 *Escaneo Finalizado ({fase_mercado})*\nNingún activo superó los"
-      f" filtros estrictos de compresión, breakout 20D y RVOL ≥ {RVOL_MINIMO_REQUERIDO}x."
-  )
+if __name__ == "__main__":
+  app.run(host="0.0.0.0", port=10000)
