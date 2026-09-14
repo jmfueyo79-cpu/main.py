@@ -2,6 +2,7 @@
 import datetime
 from zoneinfo import ZoneInfo
 import logging
+import threading
 from flask import Flask
 import numpy as np
 import pandas as pd
@@ -72,10 +73,9 @@ def obtener_universo():
 
 
 # ==============================================================================
-# 3. ENDPOINT WEB DISPARADO POR CRON-JOB.ORG
+# 3. LÓGICA DE ESCANEO EN SEGUNDO PLANO
 # ==============================================================================
-@app.route("/", methods=["GET", "POST"])
-def ejecutar_escaneo():
+def tarea_escaneo_background():
   AHORA_ESPAÑA = datetime.datetime.now(ZoneInfo("Europe/Madrid"))
   hora_actual = AHORA_ESPAÑA.time()
 
@@ -89,7 +89,6 @@ def ejecutar_escaneo():
     RVOL_MINIMO_REQUERIDO = 4.0
     fase_mercado = "Tramo Final (Power Hour)"
 
-  # Mensaje de inicio para confirmar que el webhook se ha activado
   enviar_alerta_telegram(
       "🚀 *ESCANEADOR MULTIBAGGER v3 ACTIVADO* 🚀\n\n"
       f"• Fase de Mercado: `{fase_mercado}`\n"
@@ -264,7 +263,16 @@ def ejecutar_escaneo():
         f" filtros estrictos de compresión y RVOL ≥ {RVOL_MINIMO_REQUERIDO}x."
     )
 
-  return "Escaneo completado con éxito", 200
+
+# ==============================================================================
+# 4. ENDPOINT WEB
+# ==============================================================================
+@app.route("/", methods=["GET", "POST"])
+def ejecutar_escaneo():
+  # Lanzamos el escaneo en segundo plano para responder al instante a cron-job.org
+  hilo = threading.Thread(target=tarea_escaneo_background)
+  hilo.start()
+  return "Webhook recibido. Escaneo en curso...", 200
 
 
 if __name__ == "__main__":
